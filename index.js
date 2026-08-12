@@ -1419,6 +1419,17 @@
             }
 
             if (
+                resource.mimeType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
+                /\.docx$/i.test(resource.fileName || "")
+            ) {
+                if (window.mammoth) {
+                    const arrayBuffer = await file.arrayBuffer();
+                    const result = await window.mammoth.extractRawText({ arrayBuffer });
+                    return `${metadata}\n\n${result.value}`.slice(0, 60000);
+                }
+            }
+
+            if (
                 resource.mimeType.startsWith("text/") ||
                 /\.(txt|md|csv|json|html?|js|ts|css|py|java|c|cpp|sql)$/i.test(resource.fileName || "")
             ) {
@@ -2033,10 +2044,13 @@ Rules:
     // problem). PDFs are rendered with pdf.js onto a <canvas> instead
     // of relying on the platform's native PDF plugin (which mobile
     // Chrome/Android often lacks inside an <iframe>, triggering the
-    // external hand-off). Only the explicit "unsupported file type"
-    // fallback link is a real, user-initiated external navigation —
-    // and that is intentional by design (see isResourceViewerOpen()
-    // below for how this interacts with the integrity system).
+    // external hand-off). .docx files are converted to HTML entirely
+    // client-side with Mammoth.js — no upload to a third-party
+    // converter, no leaving the page. Only the explicit "unsupported
+    // file type" fallback link is a real, user-initiated external
+    // navigation — and that is intentional by design (see
+    // isResourceViewerOpen() below for how this interacts with the
+    // integrity system).
     // -------------------------------------------------------------
 
     // Tracks any cleanup needed for whatever is currently loaded into the
@@ -2072,6 +2086,16 @@ Rules:
         return (
             resource.mimeType.startsWith("text/") ||
             /\.(txt|md|csv|json|log)$/i.test(resource.fileName || "")
+        );
+    }
+
+    // .docx (Word) resources — matched by MIME type or file extension,
+    // since browsers/OSes are inconsistent about setting the correct
+    // MIME type for uploaded Word documents.
+    function isDocxResource(resource) {
+        return (
+            resource.mimeType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
+            /\.docx$/i.test(resource.fileName || "")
         );
     }
 
@@ -2124,6 +2148,8 @@ Rules:
                 renderVideoViewer(resource, currentBlobUrl);
             } else if (resource.mimeType.startsWith("audio/")) {
                 renderAudioViewer(resource, currentBlobUrl);
+            } else if (isDocxResource(resource)) {
+                await renderDocxViewer(resource, file);
             } else if (isTextLikeResource(resource)) {
                 await renderTextViewer(resource, file);
             } else {
@@ -2275,6 +2301,25 @@ Rules:
     async function renderTextViewer(resource, file) {
         const text = await file.text();
         els.workspaceViewer.innerHTML = `<pre class="text-viewer">${escapeHtml(text)}</pre>`;
+    }
+
+    // Word documents (.docx): converted to HTML entirely in the browser
+    // using Mammoth.js — the file never leaves the device and no native
+    // document-viewer app is invoked, so this stays inside the Study
+    // Companion just like every other resource type here.
+    async function renderDocxViewer(resource, file) {
+        if (!window.mammoth) {
+            renderUnsupportedViewer(resource, currentBlobUrl, true);
+            return;
+        }
+        try {
+            const arrayBuffer = await file.arrayBuffer();
+            const result = await window.mammoth.convertToHtml({ arrayBuffer });
+            els.workspaceViewer.innerHTML = `<div class="docx-viewer">${result.value}</div>`;
+        } catch (error) {
+            console.warn("Could not render .docx file.", error);
+            renderUnsupportedViewer(resource, currentBlobUrl, true);
+        }
     }
 
     // Unsupported file types never redirect automatically. The student
