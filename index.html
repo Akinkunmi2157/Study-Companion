@@ -760,9 +760,21 @@
                     <option value="file">Upload document or video</option>
                     <option value="link">Video or website link</option>
                 </select>
-                <div id="resourceFileGroup"><label class="field-label" for="resourceFile">Choose file</label><input
-                        id="resourceFile" class="form-control" type="file"
-                        accept=".pdf,.doc,.docx,.txt,.md,.ppt,.pptx,.xls,.xlsx,image/*,video/*,audio/*" />
+                <div id="resourceFileGroup">
+                    <label class="field-label" for="resourceFile">Choose file</label>
+                    <div class="file-drop" id="resourceFileDrop">
+                        <input id="resourceFile" type="file"
+                            accept=".pdf,.doc,.docx,.txt,.md,.ppt,.pptx,.xls,.xlsx,image/*,video/*,audio/*" />
+                        <div class="file-drop__surface">
+                            <span class="file-drop__icon" id="resourceFileIcon">📎</span>
+                            <span class="file-drop__text">
+                                <span class="file-drop__label" id="resourceFileLabel">Choose a document or video</span>
+                                <span class="file-drop__filename" id="resourceFileName">No file chosen</span>
+                            </span>
+                            <button type="button" class="file-drop__clear" id="resourceFileClear"
+                                aria-label="Remove chosen file">✕</button>
+                        </div>
+                    </div>
                     <p class="field-help">Large files depend on available browser storage.</p>
                 </div>
                 <div id="resourceUrlGroup" class="hidden"><label class="field-label" for="resourceUrl">Web or video
@@ -772,8 +784,8 @@
                     class="form-control" rows="3" maxlength="300"
                     placeholder="Add a short description or study instructions."></textarea>
                 <div class="modal-actions"><button type="button" class="secondary-button"
-                        data-close-modal="resourceModal">Cancel</button><button type="submit"
-                        class="primary-button">Save resource</button></div>
+                        data-close-modal="resourceModal">Cancel</button><button type="submit" class="primary-button"
+                        id="resourceSubmitButton">Save resource</button></div>
             </form>
         </div>
     </div>
