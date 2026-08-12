@@ -1,0 +1,35 @@
+1. Cross-device access to resources (fixes a real gap)
+Right now uploaded files live in IndexedDB — tied to one browser on one device. A student who uploads a PDF on their laptop can't open it on their phone. Moving resource files to Supabase Storage (you already have Supabase wired in) would make the library actually follow the student around, which matters a lot for daily use.
+2. Lean into the AI you've already built
+You're extracting resource text and generating quiz questions for the post-session assessment — that's the hard part done. A few natural extensions:
+
+* AI tutor chat — let students ask questions about the resource they're studying, not just get quizzed on it afterward.
+* Auto-generated flashcards with spaced repetition — turn the objective questions you already generate into a review deck that resurfaces missed/weak questions a few days later. This is one of the highest-retention features in study apps (Anki-style) and you're 80% of the way there already.
+* Weak-topic detection — aggregate assessment results over time ("You're strongest in Chapter 3, keep missing questions on Chapter 5") instead of just a raw score per session.
+
+3. Lightweight gamification
+You already track streaks and verified sessions — the missing piece is making them feel earned:
+
+* XP/levels or badges for milestones (7-day streak, 50 verified sessions, first perfect assessment)
+* A visual metaphor tied to focus time (a growing plant/tree per session, à la Forest app) — this is a proven emotional hook for Pomodoro-style apps.
+* Weekly recap ("You studied 4h 20m this week, up 30% from last week") — Duolingo-style summary nudges people back in.
+
+4. Reminders that pull them back
+The app currently only works while a tab is open. Browser push notifications for: a task due today, a streak about to break, or "you usually study around now" would recover a lot of the drop-off that kills habit apps.
+5. Light social accountability
+Doesn't need to be a full social network — even just:
+
+* Study-with-a-friend shared timer/room
+* Opt-in leaderboard among a small group (classmates, study group) on weekly minutes
+Social proof and mild competition are consistently the strongest retention levers in studying-specific apps (Study Bunny, Forest, Flora all lean on this).
+
+6. Make it installable
+Turning this into a PWA (manifest + service worker) so it can live on a phone home screen closes the loop with the mobile CSS work we just did — an app icon on the home screen gets opened far more often than a bookmarked tab.
+7. Onboarding
+The integrity system (fullscreen, presence checks, no-paste reflections, resource-grounded quiz) is genuinely good but a lot to hit cold on first use. A 3-4 step first-run walkthrough explaining why these exist (accountability, not surveillance) would reduce first-session drop-off.
+
+
+
+
+
+i need to integrate this one after the other into this platform

@@ -1,0 +1,879 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description"
+        content="Digital Study Companion — a browser-based study timer, task board, and progress tracker." />
+    <title>Digital Study Companion</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap"
+        rel="stylesheet" />
+    <link rel="stylesheet" href="./index.css" />
+    <!-- Put this in index.html inside <head> -->
+    <script type="module">
+        import { GoogleGenAI, Type } from "https://esm.sh/@google/genai";
+        window.GoogleGenAI = GoogleGenAI;
+        window.Type = Type;
+    </script>
+</head>
+
+<body>
+    <section class="auth-shell" id="authShell" aria-label="Student authentication">
+        <div class="auth-brand-panel">
+            <div class="auth-brand-copy">
+                <div class="brand auth-brand">
+                    <div class="brand-mark">DS</div>
+                    <div>
+                        <h1>Study Companion</h1>
+                        <p>Focus. Finish. Improve.</p>
+                    </div>
+                </div>
+                <span class="auth-kicker">Your personal study workspace</span>
+                <h2>Study with clarity, consistency, and confidence.</h2>
+                <p>Organise learning materials, plan tasks, complete verified focus sessions, and see your progress in
+                    one private workspace.</p>
+                <div class="auth-benefits">
+                    <div><span>✓</span>
+                        <p><strong>Stay organised</strong><small>Keep resources, tasks, and goals together.</small></p>
+                    </div>
+                    <div><span>✓</span>
+                        <p><strong>Protect your focus</strong><small>Use guided sessions and integrity checks.</small>
+                        </p>
+                    </div>
+                    <div><span>✓</span>
+                        <p><strong>Track real progress</strong><small>Build streaks and review completed work.</small>
+                        </p>
+                    </div>
+                </div>
+            </div>
+            <p class="auth-privacy">🔒 Your study data stays private in this browser prototype.</p>
+        </div>
+        <div class="auth-form-panel">
+            <div class="auth-card">
+                <div class="auth-mobile-brand">
+                    <div class="brand-mark">DS</div><strong>Study Companion</strong>
+                </div>
+                <div class="auth-view active" id="loginView">
+                    <p class="eyebrow">Welcome back</p>
+                    <h2>Log in to continue</h2>
+                    <p class="auth-subtitle">Access your study dashboard and continue where you stopped.</p>
+                    <form id="loginForm" novalidate>
+                        <label>Email address<input class="form-control" id="loginEmail" type="email"
+                                autocomplete="email" placeholder="student@example.com" required></label>
+                        <label>Password<div class="password-field"><input class="form-control" id="loginPassword"
+                                    type="password" autocomplete="current-password" placeholder="Enter your password"
+                                    required><button type="button" class="password-toggle"
+                                    data-password-toggle="loginPassword" aria-label="Show password">Show</button></div>
+                        </label>
+                        <div class="auth-row"><label class="check-label"><input id="rememberMe" type="checkbox" checked>
+                                Keep me logged in</label><button class="text-button" type="button"
+                                data-auth-view="forgotView">Forgot password?</button></div>
+                        <p class="form-error" id="loginError" role="alert"></p>
+                        <button class="primary-button auth-submit" type="submit">Log in</button>
+                    </form>
+                    <p class="auth-switch">New here? <button class="text-button" type="button"
+                            data-auth-view="signupView">Create an account</button></p>
+                </div>
+                <div class="auth-view" id="signupView">
+                    <button class="auth-back" type="button" data-auth-view="loginView">← Back to login</button>
+                    <p class="eyebrow">Get started</p>
+                    <h2>Create your student account</h2>
+                    <p class="auth-subtitle">Set up your secure workspace in a few seconds.</p>
+                    <form id="signupForm" novalidate>
+                        <label>Full name<input class="form-control" id="signupName" maxlength="80" autocomplete="name"
+                                placeholder="Your full name" required></label>
+                        <label>Email address<input class="form-control" id="signupEmail" type="email"
+                                autocomplete="email" placeholder="student@example.com" required></label>
+                        <label>Password<div class="password-field"><input class="form-control" id="signupPassword"
+                                    type="password" autocomplete="new-password" placeholder="At least 8 characters"
+                                    required><button type="button" class="password-toggle"
+                                    data-password-toggle="signupPassword">Show</button></div></label>
+                        <div class="password-strength"><span id="passwordStrengthBar"></span></div><small
+                            id="passwordHint">Use 8+ characters with uppercase, lowercase, and a number.</small>
+                        <label>Confirm password<div class="password-field"><input class="form-control"
+                                    id="signupConfirmPassword" type="password" autocomplete="new-password"
+                                    placeholder="Repeat your password" required><button type="button"
+                                    class="password-toggle" data-password-toggle="signupConfirmPassword">Show</button>
+                            </div></label>
+                        <label class="check-label terms"><input id="acceptTerms" type="checkbox" required> I agree to
+                            the Terms of Use and Privacy Notice.</label>
+                        <p class="form-error" id="signupError" role="alert"></p>
+                        <button class="primary-button auth-submit" type="submit">Create account</button>
+                    </form>
+                </div>
+                <div class="auth-view" id="verifyEmailView">
+                    <button class="auth-back" type="button" data-auth-view="signupView">← Use a different email</button>
+                    <p class="eyebrow">Confirm your email</p>
+                    <h2>Enter your verification code</h2>
+                    <p class="auth-subtitle">We sent a 6-digit code to <strong id="verifyEmailAddress"></strong>. Enter
+                        it below to activate your account. The code expires shortly, so request a new one if it
+                        times out.</p>
+                    <form id="verifyEmailForm" novalidate>
+                        <label>Verification code<input class="form-control code-input" id="verifyEmailCode"
+                                inputmode="numeric" maxlength="6" placeholder="000000" autocomplete="one-time-code"
+                                required></label>
+                        <p class="form-error" id="verifyEmailError" role="alert"></p>
+                        <button class="primary-button auth-submit" type="submit">Verify &amp; create account</button>
+                    </form>
+                    <p class="auth-switch">Didn't get a code? <button class="text-button" type="button"
+                            id="resendVerificationCode">Resend code</button></p>
+                </div>
+                <div class="auth-view" id="forgotView">
+                    <button class="auth-back" type="button" data-auth-view="loginView">← Back to login</button>
+                    <p class="eyebrow">Account recovery</p>
+                    <h2>Forgot your password?</h2>
+                    <p class="auth-subtitle">Enter your registered email. We will generate a secure reset code for this
+                        prototype.</p>
+                    <form id="forgotForm" novalidate><label>Email address<input class="form-control" id="forgotEmail"
+                                type="email" autocomplete="email" placeholder="student@example.com" required></label>
+                        <p class="form-error" id="forgotError" role="alert"></p><button
+                            class="primary-button auth-submit" type="submit">Send reset code</button>
+                    </form>
+                </div>
+                <div class="auth-view" id="resetView">
+                    <button class="auth-back" type="button" data-auth-view="forgotView">← Use another email</button>
+                    <p class="eyebrow">Reset password</p>
+                    <h2>Enter your reset code</h2>
+                    <p class="auth-subtitle" id="resetInstruction">Use the six-digit code generated for your account.
+                    </p>
+                    <div class="demo-code" id="demoResetCode"></div>
+                    <form id="resetForm" novalidate><label>Reset code<input class="form-control code-input"
+                                id="resetCode" inputmode="numeric" maxlength="6" placeholder="000000"
+                                required></label><label>New password<div class="password-field"><input
+                                    class="form-control" id="resetPassword" type="password" autocomplete="new-password"
+                                    placeholder="Create a new password" required><button type="button"
+                                    class="password-toggle" data-password-toggle="resetPassword">Show</button></div>
+                        </label><label>Confirm new password<input class="form-control" id="resetConfirmPassword"
+                                type="password" autocomplete="new-password" placeholder="Repeat new password"
+                                required></label>
+                        <p class="form-error" id="resetError" role="alert"></p><button
+                            class="primary-button auth-submit" type="submit">Reset password</button>
+                    </form>
+                </div>
+                <div class="auth-view auth-success" id="resetSuccessView">
+                    <div class="success-icon">✓</div>
+                    <h2>Password updated</h2>
+                    <p>Your password has been reset successfully. You can now log in with the new password.</p><button
+                        class="primary-button auth-submit" type="button" data-auth-view="loginView">Return to
+                        login</button>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <div class="app-shell hidden" id="appShell">
+        <aside class="sidebar" id="sidebar">
+            <div class="brand">
+                <div class="brand-mark" aria-hidden="true">DS</div>
+                <div>
+                    <h1>Study Companion</h1>
+                    <p>Focus. Finish. Improve.</p>
+                </div>
+            </div>
+
+            <nav class="nav-list" aria-label="Main navigation">
+                <button class="nav-item active" data-section="dashboard">
+                    <span>⌂</span> Dashboard
+                </button>
+                <button class="nav-item" data-section="library">
+                    <span>▤</span> Study Library
+                </button>
+                <button class="nav-item" data-section="timer">
+                    <span>◷</span> Study Timer
+                </button>
+                <button class="nav-item" data-section="tasks">
+                    <span>✓</span> Task Board
+                </button>
+                <button class="nav-item" data-section="progress">
+                    <span>↗</span> Progress
+                </button>
+                <button class="nav-item" data-section="profile">
+                    <span>●</span> Student Profile
+                </button>
+                <button class="nav-item" data-section="settings">
+                    <span>⚙</span> Settings
+                </button>
+            </nav>
+
+            <div class="sidebar-footer">
+                <button class="nav-item logout-button" id="logoutButton"><span>↪</span> Log out</button>
+                <div class="integrity-card">
+                    <div class="integrity-card__icon">🛡️</div>
+                    <div>
+                        <strong>Integrity mode</strong>
+                        <p>Focus checks are active during study sessions.</p>
+                    </div>
+                </div>
+            </div>
+        </aside>
+
+        <main class="main-content">
+            <header class="topbar">
+                <button class="icon-button mobile-menu" id="menuButton" aria-label="Open menu">☰</button>
+                <div>
+                    <p class="eyebrow" id="todayLabel"></p>
+                    <h2 id="pageTitle">Dashboard</h2>
+                </div>
+                <div class="topbar-actions">
+                    <button class="icon-button" id="themeToggle" aria-label="Toggle theme">☾</button>
+                    <button class="avatar avatar-button" id="profileShortcut" title="Student profile">ST</button>
+                </div>
+            </header>
+
+            <div class="content-wrap">
+                <!-- Dashboard -->
+                <section class="page-section active" id="dashboardSection">
+                    <div class="hero-card">
+                        <div>
+                            <span class="pill">Today’s focus</span>
+                            <h3>Build momentum, one focused block at a time.</h3>
+                            <p>
+                                Start a verified study session, complete your priority tasks,
+                                and protect your streak.
+                            </p>
+                            <button class="primary-button" data-go-to="timer">Start studying</button>
+                        </div>
+                        <div class="hero-visual" aria-hidden="true">
+                            <div class="orb orb-one"></div>
+                            <div class="orb orb-two"></div>
+                            <div class="study-illustration">📚</div>
+                        </div>
+                    </div>
+
+                    <div class="stats-grid">
+                        <article class="stat-card">
+                            <div class="stat-icon">🔥</div>
+                            <div>
+                                <p>Current streak</p>
+                                <strong><span id="dashboardStreak">0</span> days</strong>
+                            </div>
+                        </article>
+                        <article class="stat-card">
+                            <div class="stat-icon">⏱️</div>
+                            <div>
+                                <p>Total focus time</p>
+                                <strong id="dashboardHours">0h 0m</strong>
+                            </div>
+                        </article>
+                        <article class="stat-card">
+                            <div class="stat-icon">✅</div>
+                            <div>
+                                <p>Tasks completed</p>
+                                <strong id="dashboardTasks">0</strong>
+                            </div>
+                        </article>
+                        <article class="stat-card">
+                            <div class="stat-icon">🎯</div>
+                            <div>
+                                <p>Verified sessions</p>
+                                <strong id="dashboardSessions">0</strong>
+                            </div>
+                        </article>
+                    </div>
+
+                    <div class="dashboard-grid">
+                        <article class="panel">
+                            <div class="panel-heading">
+                                <div>
+                                    <p class="eyebrow">Priority queue</p>
+                                    <h3>Today’s tasks</h3>
+                                </div>
+                                <button class="text-button" data-go-to="tasks">View board</button>
+                            </div>
+                            <div id="dashboardTaskList" class="compact-list"></div>
+                        </article>
+
+                        <article class="panel">
+                            <div class="panel-heading">
+                                <div>
+                                    <p class="eyebrow">Last 7 days</p>
+                                    <h3>Study activity</h3>
+                                </div>
+                            </div>
+                            <div class="mini-chart" id="weeklyChart" aria-label="Seven-day study activity chart"></div>
+                        </article>
+                    </div>
+                </section>
+
+                <!-- Study Library -->
+                <section class="page-section" id="librarySection">
+                    <div class="section-toolbar">
+                        <div>
+                            <p class="eyebrow">Your learning materials</p>
+                            <h3>Study library</h3>
+                        </div>
+                        <button class="primary-button" id="openResourceModal">+ Add resource</button>
+                    </div>
+                    <div class="library-summary">
+                        <article class="stat-card">
+                            <div class="stat-icon">📄</div>
+                            <div>
+                                <p>Documents</p><strong id="documentCount">0</strong>
+                            </div>
+                        </article>
+                        <article class="stat-card">
+                            <div class="stat-icon">🎬</div>
+                            <div>
+                                <p>Videos</p><strong id="videoCount">0</strong>
+                            </div>
+                        </article>
+                        <article class="stat-card">
+                            <div class="stat-icon">🔗</div>
+                            <div>
+                                <p>Links</p><strong id="linkCount">0</strong>
+                            </div>
+                        </article>
+                    </div>
+                    <div class="resource-toolbar">
+                        <input type="search" id="resourceSearch" class="form-control"
+                            placeholder="Search your library..." />
+                        <select id="resourceTypeFilter" class="form-control">
+                            <option value="all">All resources</option>
+                            <option value="document">Documents</option>
+                            <option value="video">Videos</option>
+                            <option value="link">Links</option>
+                        </select>
+                    </div>
+                    <div class="resource-grid" id="resourceGrid"></div>
+                </section>
+
+                <!-- Timer -->
+                <section class="page-section" id="timerSection">
+                    <div class="study-workspace hidden" id="studyWorkspace">
+                        <div class="workspace-header">
+                            <div>
+                                <p class="eyebrow">Current resource</p>
+                                <h3 id="workspaceTitle">Study material</h3>
+                            </div>
+                            <button class="secondary-button" id="closeWorkspace">Close resource</button>
+                        </div>
+                        <div class="workspace-viewer" id="workspaceViewer"></div>
+                    </div>
+                    <div class="timer-layout">
+                        <article class="panel timer-panel">
+                            <div class="mode-tabs" role="tablist" aria-label="Timer mode">
+                                <button class="mode-tab active" data-mode="focus">Focus</button>
+                                <button class="mode-tab" data-mode="shortBreak">Short break</button>
+                                <button class="mode-tab" data-mode="longBreak">Long break</button>
+                            </div>
+
+                            <div class="timer-ring" id="timerRing">
+                                <div class="timer-ring__inner">
+                                    <p id="timerModeLabel">Focus session</p>
+                                    <div class="timer-display" id="timerDisplay">25:00</div>
+                                    <span id="timerStatus">Ready</span>
+                                </div>
+                            </div>
+
+                            <div class="timer-controls">
+                                <button class="secondary-button" id="resetTimer">Reset</button>
+                                <button class="primary-button timer-main-button" id="startPauseTimer">Start</button>
+                                <button class="secondary-button" id="skipTimer">Skip</button>
+                            </div>
+
+                            <div class="session-meta">
+                                <div>
+                                    <span>Session cycle</span>
+                                    <strong id="sessionCycle">1 of 4</strong>
+                                </div>
+                                <div>
+                                    <span>Focus violations</span>
+                                    <strong id="focusViolationCount">0</strong>
+                                </div>
+                                <div>
+                                    <span>Checks passed</span>
+                                    <strong id="checksPassedCount">0</strong>
+                                </div>
+                            </div>
+                        </article>
+
+                        <aside class="timer-sidebar">
+                            <article class="panel">
+                                <div class="panel-heading">
+                                    <div>
+                                        <p class="eyebrow">Session target</p>
+                                        <h3>What are you studying?</h3>
+                                    </div>
+                                </div>
+                                <label class="field-label" for="sessionTask">Select a task</label>
+                                <select id="sessionTask" class="form-control">
+                                    <option value="">General study session</option>
+                                </select>
+
+                                <label class="field-label" for="sessionGoal">Session goal</label>
+                                <textarea id="sessionGoal" class="form-control" rows="4" maxlength="180"
+                                    placeholder="Example: Finish chapter 4 notes and answer five practice questions."></textarea>
+                                <div class="character-count"><span id="goalCount">0</span>/180</div>
+                            </article>
+
+                            <article class="panel integrity-panel">
+                                <div class="panel-heading">
+                                    <div>
+                                        <p class="eyebrow">Accountability</p>
+                                        <h3>Integrity rules</h3>
+                                    </div>
+                                </div>
+                                <ul class="rules-list">
+                                    <li><span>✓</span> Timer pauses when the tab is hidden.</li>
+                                    <li><span>✓</span> Random presence checks may appear.</li>
+                                    <li><span>✓</span> A reflection is required to log focus time.</li>
+                                    <li><span>✓</span> Pasting is blocked in reflections.</li>
+                                </ul>
+                            </article>
+                        </aside>
+                    </div>
+                </section>
+
+                <!-- Tasks -->
+                <section class="page-section" id="tasksSection">
+                    <div class="section-toolbar">
+                        <div>
+                            <p class="eyebrow">Plan your workload</p>
+                            <h3>Task management board</h3>
+                        </div>
+                        <button class="primary-button" id="openTaskModal">+ Add task</button>
+                    </div>
+
+                    <div class="task-filters">
+                        <input type="search" id="taskSearch" class="form-control" placeholder="Search tasks..."
+                            aria-label="Search tasks" />
+                        <select id="priorityFilter" class="form-control" aria-label="Filter by priority">
+                            <option value="all">All priorities</option>
+                            <option value="high">High priority</option>
+                            <option value="medium">Medium priority</option>
+                            <option value="low">Low priority</option>
+                        </select>
+                    </div>
+
+                    <div class="kanban-board">
+                        <article class="kanban-column">
+                            <div class="column-heading">
+                                <div><span class="status-dot todo"></span> To do</div>
+                                <span class="count-badge" id="todoCount">0</span>
+                            </div>
+                            <div class="task-list" id="todoList"></div>
+                        </article>
+
+                        <article class="kanban-column">
+                            <div class="column-heading">
+                                <div><span class="status-dot progress"></span> In progress</div>
+                                <span class="count-badge" id="inProgressCount">0</span>
+                            </div>
+                            <div class="task-list" id="inProgressList"></div>
+                        </article>
+
+                        <article class="kanban-column">
+                            <div class="column-heading">
+                                <div><span class="status-dot done"></span> Done</div>
+                                <span class="count-badge" id="doneCount">0</span>
+                            </div>
+                            <div class="task-list" id="doneList"></div>
+                        </article>
+                    </div>
+                </section>
+
+                <!-- Progress -->
+                <section class="page-section" id="progressSection">
+                    <div class="stats-grid">
+                        <article class="stat-card">
+                            <div class="stat-icon">🔥</div>
+                            <div>
+                                <p>Current streak</p>
+                                <strong><span id="progressStreak">0</span> days</strong>
+                            </div>
+                        </article>
+                        <article class="stat-card">
+                            <div class="stat-icon">🏆</div>
+                            <div>
+                                <p>Longest streak</p>
+                                <strong><span id="longestStreak">0</span> days</strong>
+                            </div>
+                        </article>
+                        <article class="stat-card">
+                            <div class="stat-icon">⏳</div>
+                            <div>
+                                <p>Total study time</p>
+                                <strong id="progressTotalTime">0h 0m</strong>
+                            </div>
+                        </article>
+                        <article class="stat-card">
+                            <div class="stat-icon">📊</div>
+                            <div>
+                                <p>Completion rate</p>
+                                <strong id="completionRate">0%</strong>
+                            </div>
+                        </article>
+                    </div>
+
+                    <div class="progress-grid">
+                        <article class="panel">
+                            <div class="panel-heading">
+                                <div>
+                                    <p class="eyebrow">Focus trend</p>
+                                    <h3>Study minutes this week</h3>
+                                </div>
+                            </div>
+                            <div class="large-chart" id="progressChart"></div>
+                        </article>
+
+                        <article class="panel">
+                            <div class="panel-heading">
+                                <div>
+                                    <p class="eyebrow">Consistency</p>
+                                    <h3>Weekly goal</h3>
+                                </div>
+                            </div>
+                            <div class="goal-ring" id="goalRing">
+                                <div>
+                                    <strong id="weeklyGoalPercent">0%</strong>
+                                    <span>completed</span>
+                                </div>
+                            </div>
+                            <p class="goal-caption" id="weeklyGoalCaption">0 of 300 minutes</p>
+                        </article>
+                    </div>
+
+                    <article class="panel history-panel">
+                        <div class="panel-heading">
+                            <div>
+                                <p class="eyebrow">Verified record</p>
+                                <h3>Session history</h3>
+                            </div>
+                            <button class="danger-text-button" id="clearHistory">Clear history</button>
+                        </div>
+                        <div class="history-table-wrap">
+                            <table class="history-table">
+                                <thead>
+                                    <tr>
+                                        <th>Date</th>
+                                        <th>Study target</th>
+                                        <th>Duration</th>
+                                        <th>Integrity</th>
+                                        <th>Reflection</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="historyBody"></tbody>
+                            </table>
+                        </div>
+                    </article>
+                </section>
+
+                <!-- Student Profile -->
+                <section class="page-section" id="profileSection">
+                    <div class="profile-layout">
+                        <article class="panel profile-card">
+                            <div class="profile-photo-wrap">
+                                <div class="profile-avatar-large" id="profileAvatarLarge">ST</div>
+                                <button class="profile-photo-button" id="profilePhotoButton" type="button"
+                                    aria-label="Upload profile picture">📷</button>
+                                <input id="profilePhotoInput" type="file" accept="image/jpeg,image/png,image/webp"
+                                    hidden />
+                            </div>
+                            <div class="profile-photo-actions"><button class="text-button" id="changeProfilePhoto"
+                                    type="button">Upload photo</button><button class="danger-text-button hidden"
+                                    id="removeProfilePhoto" type="button">Remove</button></div>
+                            <h3 id="profileDisplayName">Create your student profile</h3>
+                            <p id="profileDisplayMeta">Add your details to personalise your study experience.</p>
+                            <div class="profile-stats">
+                                <div><strong id="profileResourceCount">0</strong><span>Resources</span></div>
+                                <div><strong id="profileTaskCount">0</strong><span>Tasks</span></div>
+                                <div><strong id="profileSessionCount">0</strong><span>Sessions</span></div>
+                            </div>
+                        </article>
+                        <article class="panel">
+                            <div class="panel-heading">
+                                <div>
+                                    <p class="eyebrow">Student account</p>
+                                    <h3>Profile information</h3>
+                                </div>
+                            </div>
+                            <form id="profileForm">
+                                <div class="two-column-fields">
+                                    <label>Full name<input id="profileName" class="form-control" required maxlength="80"
+                                            placeholder="Your full name" /></label>
+                                    <label>Email address<input id="profileEmail" class="form-control" type="email"
+                                            required placeholder="student@example.com" /></label>
+                                </div>
+                                <div class="two-column-fields">
+                                    <label>School or institution<input id="profileSchool" class="form-control"
+                                            maxlength="100" placeholder="Your school" /></label>
+                                    <label>Course or programme<input id="profileCourse" class="form-control"
+                                            maxlength="100" placeholder="What are you studying?" /></label>
+                                </div>
+                                <label class="field-label" for="profileBio">Study goal</label>
+                                <textarea id="profileBio" class="form-control" rows="4" maxlength="240"
+                                    placeholder="Describe your current learning goal."></textarea>
+                                <div class="modal-actions"><button class="primary-button" type="submit">Save
+                                        profile</button></div>
+                            </form>
+                        </article>
+                    </div>
+                </section>
+
+                <!-- Settings -->
+                <section class="page-section" id="settingsSection">
+                    <div class="settings-grid">
+                        <article class="panel">
+                            <div class="panel-heading">
+                                <div>
+                                    <p class="eyebrow">Timer preferences</p>
+                                    <h3>Session durations</h3>
+                                </div>
+                            </div>
+                            <div class="settings-form-grid">
+                                <label>
+                                    Focus minutes
+                                    <input id="focusMinutesSetting" class="form-control" type="number" min="1"
+                                        max="180" />
+                                </label>
+                                <label>
+                                    Short break
+                                    <input id="shortBreakSetting" class="form-control" type="number" min="1" max="60" />
+                                </label>
+                                <label>
+                                    Long break
+                                    <input id="longBreakSetting" class="form-control" type="number" min="1" max="90" />
+                                </label>
+                                <label>
+                                    Sessions before long break
+                                    <input id="cyclesSetting" class="form-control" type="number" min="1" max="10" />
+                                </label>
+                            </div>
+                        </article>
+
+                        <!-- Integrity controls are mandatory and intentionally hidden from students. -->
+                        <div class="hidden" aria-hidden="true">
+                            <input type="checkbox" id="focusTrackingSetting" checked disabled />
+                            <input type="checkbox" id="verificationSetting" checked disabled />
+                            <input type="checkbox" id="soundSetting" checked disabled />
+                        </div>
+
+                        <article class="panel">
+                            <div class="panel-heading">
+                                <div>
+                                    <p class="eyebrow">Progress target</p>
+                                    <h3>Weekly study goal</h3>
+                                </div>
+                            </div>
+                            <label class="field-label" for="weeklyGoalSetting">Target minutes per week</label>
+                            <input id="weeklyGoalSetting" class="form-control" type="number" min="30" max="10080"
+                                step="15" />
+                        </article>
+
+                        <article class="panel danger-zone">
+                            <div class="panel-heading">
+                                <div>
+                                    <p class="eyebrow">Data controls</p>
+                                    <h3>Local browser data</h3>
+                                </div>
+                            </div>
+                            <p>
+                                All tasks, settings, and study history are stored only in this browser.
+                            </p>
+                            <button class="danger-button" id="resetAllData">Reset all app data</button>
+                        </article>
+                    </div>
+
+                    <div class="save-settings-row">
+                        <button class="primary-button" id="saveSettings">Save settings</button>
+                    </div>
+                </section>
+            </div>
+        </main>
+    </div>
+
+    <!-- Task Modal -->
+    <div class="modal-backdrop hidden" id="taskModal" role="dialog" aria-modal="true" aria-labelledby="taskModalTitle">
+        <div class="modal-card">
+            <div class="modal-header">
+                <div>
+                    <p class="eyebrow">Task details</p>
+                    <h3 id="taskModalTitle">Add a new task</h3>
+                </div>
+                <button class="icon-button" data-close-modal="taskModal" aria-label="Close task modal">×</button>
+            </div>
+
+            <form id="taskForm">
+                <input type="hidden" id="editingTaskId" />
+                <label class="field-label" for="taskTitle">Task title</label>
+                <input id="taskTitle" class="form-control" type="text" maxlength="100" required
+                    placeholder="Example: Complete biology assignment" />
+
+                <label class="field-label" for="taskDescription">Description</label>
+                <textarea id="taskDescription" class="form-control" rows="3" maxlength="240"
+                    placeholder="Add useful context or a clear definition of done."></textarea>
+
+                <div class="two-column-fields">
+                    <label>
+                        Priority
+                        <select id="taskPriority" class="form-control">
+                            <option value="medium">Medium</option>
+                            <option value="high">High</option>
+                            <option value="low">Low</option>
+                        </select>
+                    </label>
+
+                    <label>
+                        Due date
+                        <input id="taskDueDate" class="form-control" type="date" />
+                    </label>
+                </div>
+
+                <label class="field-label" for="taskResource">Study resource</label>
+                <select id="taskResource" class="form-control">
+                    <option value="">No linked resource</option>
+                </select>
+
+                <label class="field-label" for="taskStatus">Status</label>
+                <select id="taskStatus" class="form-control">
+                    <option value="todo">To do</option>
+                    <option value="inProgress">In progress</option>
+                    <option value="done">Done</option>
+                </select>
+
+                <div class="modal-actions">
+                    <button type="button" class="secondary-button" data-close-modal="taskModal">Cancel</button>
+                    <button type="submit" class="primary-button">Save task</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Resource Modal -->
+    <div class="modal-backdrop hidden" id="resourceModal" role="dialog" aria-modal="true"
+        aria-labelledby="resourceModalTitle">
+        <div class="modal-card">
+            <div class="modal-header">
+                <div>
+                    <p class="eyebrow">Learning material</p>
+                    <h3 id="resourceModalTitle">Add to study library</h3>
+                </div><button class="icon-button" data-close-modal="resourceModal">×</button>
+            </div>
+            <form id="resourceForm">
+                <label class="field-label" for="resourceTitle">Title</label><input id="resourceTitle"
+                    class="form-control" required maxlength="120" placeholder="Example: Introduction to Biology" />
+                <label class="field-label" for="resourceKind">Resource type</label>
+                <select id="resourceKind" class="form-control">
+                    <option value="file">Upload document or video</option>
+                    <option value="link">Video or website link</option>
+                </select>
+                <div id="resourceFileGroup"><label class="field-label" for="resourceFile">Choose file</label><input
+                        id="resourceFile" class="form-control" type="file"
+                        accept=".pdf,.doc,.docx,.txt,.md,.ppt,.pptx,.xls,.xlsx,image/*,video/*,audio/*" />
+                    <p class="field-help">Large files depend on available browser storage.</p>
+                </div>
+                <div id="resourceUrlGroup" class="hidden"><label class="field-label" for="resourceUrl">Web or video
+                        URL</label><input id="resourceUrl" class="form-control" type="url" placeholder="https://..." />
+                </div>
+                <label class="field-label" for="resourceNotes">Notes</label><textarea id="resourceNotes"
+                    class="form-control" rows="3" maxlength="300"
+                    placeholder="Add a short description or study instructions."></textarea>
+                <div class="modal-actions"><button type="button" class="secondary-button"
+                        data-close-modal="resourceModal">Cancel</button><button type="submit"
+                        class="primary-button">Save resource</button></div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Verification Modal -->
+    <div class="modal-backdrop hidden verification-backdrop" id="verificationModal" role="dialog" aria-modal="true">
+        <div class="modal-card verification-card">
+            <div class="verification-icon">👀</div>
+            <p class="eyebrow">Presence check</p>
+            <h3>Are you still studying?</h3>
+            <p>
+                Confirm within <strong><span id="verificationCountdown">15</span> seconds</strong>
+                to keep this session verified.
+            </p>
+            <button class="primary-button" id="confirmPresence">I’m here and focused</button>
+        </div>
+    </div>
+
+    <!-- Reflection Modal -->
+    <div class="modal-backdrop hidden" id="reflectionModal" role="dialog" aria-modal="true">
+        <div class="modal-card reflection-card">
+            <div class="modal-header">
+                <div>
+                    <p class="eyebrow">Session reflection</p>
+                    <h3>What did you learn?</h3>
+                </div>
+            </div>
+            <p class="reflection-help" id="reflectionResourceNote"></p>
+            <p class="reflection-help">
+                Write at least 40 characters in your own words. Copy and paste are disabled.
+            </p>
+            <textarea id="reflectionText" class="form-control" rows="6" minlength="40" maxlength="600"
+                placeholder="Summarise what you covered, what became clearer, and what you should review next."></textarea>
+            <div class="reflection-footer">
+                <div class="character-count"><span id="reflectionCount">0</span>/600</div>
+                <p class="validation-message" id="reflectionValidation"></p>
+            </div>
+            <p class="alignment-status" id="reflectionAlignment"></p>
+            <div class="modal-actions">
+                <button class="danger-text-button" id="discardSession">Discard session</button>
+                <button class="primary-button" id="saveReflection" disabled>Check summary &amp; continue</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Resource Assessment Modal -->
+    <div class="modal-backdrop hidden" id="assessmentModal" role="dialog" aria-modal="true"
+        aria-labelledby="assessmentTitle">
+        <div class="modal-card assessment-card">
+            <div class="modal-header">
+                <div>
+                    <p class="eyebrow">Resource comprehension check</p>
+                    <h3 id="assessmentTitle">Confirm what you understood</h3>
+                </div>
+            </div>
+            <div class="assessment-summary-status" id="assessmentSummaryStatus"></div>
+            <p class="reflection-help">Answer 10 objective questions and 2 theory questions generated strictly from the
+                resource you studied.</p>
+            <form id="assessmentForm">
+                <section class="assessment-section">
+                    <h4>Objective questions</h4>
+                    <div id="objectiveQuestions" class="assessment-question-list"></div>
+                </section>
+                <section class="assessment-section">
+                    <h4>Theory questions</h4>
+                    <div id="theoryQuestions" class="assessment-question-list"></div>
+                </section>
+                <p class="validation-message" id="assessmentValidation"></p>
+                <div class="modal-actions">
+                    <button class="secondary-button" type="button" id="backToReflection">Review summary</button>
+                    <button class="primary-button" type="submit">Submit assessment & log session</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Reflection Viewer -->
+    <div class="modal-backdrop hidden" id="reflectionViewModal" role="dialog" aria-modal="true">
+        <div class="modal-card">
+            <div class="modal-header">
+                <div>
+                    <p class="eyebrow">Saved reflection</p>
+                    <h3 id="reflectionViewTitle">Session reflection</h3>
+                </div>
+                <button class="icon-button" data-close-modal="reflectionViewModal"
+                    aria-label="Close reflection">×</button>
+            </div>
+            <p class="saved-reflection" id="reflectionViewText"></p>
+        </div>
+    </div>
+
+    <div class="toast-container" id="toastContainer" aria-live="polite"></div>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.min.mjs" type="module"></script>
+    <script type="module">
+        import * as pdfjsLib from "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.min.mjs";
+        pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.worker.min.mjs";
+        window.pdfjsLib = pdfjsLib;
+    </script>
+    <script src="./index.js"></script>
+</body>
+
+</html>
