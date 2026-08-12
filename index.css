@@ -2429,3 +2429,209 @@ textarea.form-control {
         padding: 18px;
     }
 }
+
+/* In-app resource viewer: PDF / image lightbox / text / audio */
+
+.viewer-toolbar {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border);
+    background: color-mix(in srgb, var(--surface) 92%, transparent);
+    backdrop-filter: blur(10px);
+    flex-wrap: wrap;
+}
+
+.viewer-toolbar span {
+    min-width: 70px;
+    color: var(--muted);
+    font-size: .78rem;
+    font-weight: 700;
+    text-align: center;
+}
+
+.pdf-toolbar__spacer {
+    flex: 1;
+    min-width: 12px;
+}
+
+/* PDF viewer */
+.pdf-viewer {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    min-height: 480px;
+}
+
+.pdf-canvas-scroll {
+    flex: 1;
+    width: 100%;
+    overflow: auto;
+    -webkit-overflow-scrolling: touch;
+    touch-action: pan-x pan-y pinch-zoom;
+    display: flex;
+    justify-content: center;
+    padding: 16px;
+    background: #14161f;
+}
+
+.pdf-canvas-scroll canvas {
+    max-width: none;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, .35);
+    background: white;
+}
+
+/* Image lightbox */
+.image-lightbox {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    min-height: 420px;
+}
+
+.image-lightbox__stage {
+    flex: 1;
+    position: relative;
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #0d0f16;
+    touch-action: none;
+}
+
+.image-lightbox__stage img {
+    width: auto;
+    height: auto;
+    max-width: 100%;
+    max-height: 100%;
+    min-height: 0;
+    object-fit: contain;
+    background: none;
+    transform-origin: center center;
+    transition: transform .12s ease-out;
+    user-select: none;
+    -webkit-user-drag: none;
+}
+
+.image-lightbox__stage.zoomed img {
+    transition: none;
+}
+
+/* Text viewer */
+.text-viewer {
+    width: 100%;
+    height: 100%;
+    min-height: 420px;
+    margin: 0;
+    padding: 20px;
+    overflow: auto;
+    -webkit-overflow-scrolling: touch;
+    white-space: pre-wrap;
+    word-break: break-word;
+    color: var(--text);
+    background: var(--surface-soft);
+    font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    font-size: .82rem;
+    line-height: 1.6;
+}
+
+/* Audio player */
+.audio-player-wrap {
+    display: grid;
+    place-items: center;
+    gap: 14px;
+    padding: 40px 24px;
+    text-align: center;
+}
+
+.audio-player-wrap .resource-card__icon {
+    margin: 0 auto;
+}
+
+.audio-player-wrap p {
+    margin: 0;
+    font-weight: 700;
+}
+
+/* Make the viewer container a real flex column so the toolbar/stage above can flex to fill it */
+.workspace-viewer {
+    display: flex;
+    flex-direction: column;
+    padding: 0;
+}
+
+.workspace-viewer .pdf-viewer,
+.workspace-viewer .image-lightbox,
+.workspace-viewer .text-viewer,
+.workspace-viewer .audio-player-wrap,
+.workspace-viewer .external-resource,
+.workspace-viewer .viewer-loading {
+    width: 100%;
+}
+
+.workspace-viewer .viewer-loading {
+    padding: 60px 20px;
+    text-align: center;
+}
+
+/* Full-screen resource viewer mode */
+.study-workspace.workspace-fullscreen {
+    position: fixed;
+    inset: 0;
+    z-index: 90;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    display: flex;
+    flex-direction: column;
+    background: var(--surface);
+}
+
+.study-workspace.workspace-fullscreen .workspace-header {
+    margin: 0;
+    padding: 14px 18px;
+    border-bottom: 1px solid var(--border);
+}
+
+.study-workspace.workspace-fullscreen .workspace-viewer {
+    flex: 1;
+    min-height: 0;
+    border: 0;
+    border-radius: 0;
+}
+
+.study-workspace.workspace-fullscreen .workspace-viewer iframe,
+.study-workspace.workspace-fullscreen .workspace-viewer video {
+    min-height: 0;
+    max-height: none;
+    height: 100%;
+}
+
+@media (max-width: 720px) {
+    .pdf-canvas-scroll {
+        padding: 10px;
+    }
+
+    .viewer-toolbar {
+        padding: 8px 10px;
+        gap: 6px;
+    }
+
+    .text-viewer {
+        padding: 14px;
+        font-size: .78rem;
+    }
+
+    .audio-player-wrap {
+        padding: 28px 16px;
+    }
+}
