@@ -1419,17 +1419,6 @@
             }
 
             if (
-                resource.mimeType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
-                /\.docx$/i.test(resource.fileName || "")
-            ) {
-                if (window.mammoth) {
-                    const arrayBuffer = await file.arrayBuffer();
-                    const result = await window.mammoth.extractRawText({ arrayBuffer });
-                    return `${metadata}\n\n${result.value}`.slice(0, 60000);
-                }
-            }
-
-            if (
                 resource.mimeType.startsWith("text/") ||
                 /\.(txt|md|csv|json|html?|js|ts|css|py|java|c|cpp|sql)$/i.test(resource.fileName || "")
             ) {
@@ -2044,13 +2033,10 @@ Rules:
     // problem). PDFs are rendered with pdf.js onto a <canvas> instead
     // of relying on the platform's native PDF plugin (which mobile
     // Chrome/Android often lacks inside an <iframe>, triggering the
-    // external hand-off). .docx files are converted to HTML entirely
-    // client-side with Mammoth.js — no upload to a third-party
-    // converter, no leaving the page. Only the explicit "unsupported
-    // file type" fallback link is a real, user-initiated external
-    // navigation — and that is intentional by design (see
-    // isResourceViewerOpen() below for how this interacts with the
-    // integrity system).
+    // external hand-off). Only the explicit "unsupported file type"
+    // fallback link is a real, user-initiated external navigation —
+    // and that is intentional by design (see isResourceViewerOpen()
+    // below for how this interacts with the integrity system).
     // -------------------------------------------------------------
 
     // Tracks any cleanup needed for whatever is currently loaded into the
@@ -2086,16 +2072,6 @@ Rules:
         return (
             resource.mimeType.startsWith("text/") ||
             /\.(txt|md|csv|json|log)$/i.test(resource.fileName || "")
-        );
-    }
-
-    // .docx (Word) resources — matched by MIME type or file extension,
-    // since browsers/OSes are inconsistent about setting the correct
-    // MIME type for uploaded Word documents.
-    function isDocxResource(resource) {
-        return (
-            resource.mimeType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
-            /\.docx$/i.test(resource.fileName || "")
         );
     }
 
@@ -2148,8 +2124,6 @@ Rules:
                 renderVideoViewer(resource, currentBlobUrl);
             } else if (resource.mimeType.startsWith("audio/")) {
                 renderAudioViewer(resource, currentBlobUrl);
-            } else if (isDocxResource(resource)) {
-                await renderDocxViewer(resource, file);
             } else if (isTextLikeResource(resource)) {
                 await renderTextViewer(resource, file);
             } else {
@@ -2164,17 +2138,104 @@ Rules:
     }
 
     function renderLinkViewer(resource) {
-        const safeUrl = escapeHtml(resource.url);
         const youtube = resource.url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/)([\w-]+)/);
         if (youtube) {
             els.workspaceViewer.innerHTML = `<iframe src="https://www.youtube.com/embed/${youtube[1]}" title="${escapeHtml(resource.title)}" allow="autoplay; encrypted-media; picture-in-picture" allowfullscreen></iframe>`;
             return;
         }
+        renderEmbeddedLinkViewer(resource);
+    }
+
+    // Generic web links: try to load the page inside an in-page iframe
+    // first, so the student never has to leave the Study Companion.
+    //
+    // The browser gives no clean, synchronous "this site refused to be
+    // embedded" signal — sites that block framing (via X-Frame-Options /
+    // frame-ancestors CSP) just render a blank/broken frame instead of
+    // throwing a catchable error. So this uses a best-effort heuristic:
+    // - If the iframe's own 'load' event fires, we treat the embed as
+    //   successful and reveal it.
+    // - If nothing loads within a short window, we assume the site
+    //   blocked embedding and fall back to the explicit "open externally"
+    //   card instead of leaving the student staring at a blank panel.
+    // This can't be 100% certain in every browser, but it means the large
+    // majority of embeddable sites now load right inside the app, and the
+    // few that actively refuse still degrade gracefully instead of
+    // silently failing.
+    function renderEmbeddedLinkViewer(resource) {
+        const safeUrl = escapeHtml(resource.url);
+        const frameId = `embeddedFrame-${resource.id}`;
+
+        els.workspaceViewer.innerHTML = `
+            <div class="embedded-link-viewer" id="embeddedLinkViewer">
+                <div class="viewer-toolbar embedded-toolbar">
+                    <span class="embedded-link-label" title="${safeUrl}">${escapeHtml(resource.title)}</span>
+                    <span class="embedded-link-status" id="embeddedLinkStatus">Loading…</span>
+                </div>
+                <div class="embedded-frame-stage">
+                    <div class="viewer-loading" id="embeddedLinkLoading">Loading this link inside the Study Companion…</div>
+                    <iframe
+                        id="${frameId}"
+                        class="embedded-frame hidden"
+                        src="${safeUrl}"
+                        title="${escapeHtml(resource.title)}"
+                        referrerpolicy="no-referrer-when-downgrade"
+                        sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-presentation"
+                        loading="eager">
+                    </iframe>
+                </div>
+            </div>`;
+
+        const frame = document.getElementById(frameId);
+        const loadingEl = document.getElementById("embeddedLinkLoading");
+        const statusEl = document.getElementById("embeddedLinkStatus");
+        if (!frame) return;
+
+        let settled = false;
+
+        const revealEmbedded = () => {
+            if (settled) return;
+            settled = true;
+            frame.classList.remove("hidden");
+            if (loadingEl) loadingEl.remove();
+            if (statusEl) statusEl.textContent = "Loaded in-app";
+            window.clearTimeout(fallbackTimeoutId);
+        };
+
+        const fallbackToExternal = () => {
+            if (settled) return;
+            settled = true;
+            renderUnembeddableLinkViewer(resource);
+        };
+
+        frame.addEventListener("load", revealEmbedded, { once: true });
+        frame.addEventListener("error", fallbackToExternal, { once: true });
+
+        // Sites that block framing typically never fire a usable 'load'
+        // with real content (or fire it near-instantly with an empty
+        // frame). Give slow-but-legitimate pages a generous window before
+        // assuming the embed failed.
+        const fallbackTimeoutId = window.setTimeout(() => {
+            if (!settled) fallbackToExternal();
+        }, 6000);
+
+        activeViewerCleanup = () => {
+            window.clearTimeout(fallbackTimeoutId);
+            frame.removeEventListener("load", revealEmbedded);
+            frame.removeEventListener("error", fallbackToExternal);
+        };
+    }
+
+    // Fallback shown only when a site actively refuses to be embedded
+    // (or fails to load) — the one case where continuing really does
+    // mean leaving the Study Companion in a new tab.
+    function renderUnembeddableLinkViewer(resource) {
+        const safeUrl = escapeHtml(resource.url);
         els.workspaceViewer.innerHTML = `
             <div class="external-resource">
                 <div class="resource-card__icon">🔗</div>
                 <h3>${escapeHtml(resource.title)}</h3>
-                <p>This is a web link, so it opens on its original website in a new browser tab.</p>
+                <p>This site doesn't allow itself to be shown inside another page (a security setting the site controls, not the Study Companion). You can still open it in a new tab.</p>
                 <a class="primary-button link-button" href="${safeUrl}" target="_blank" rel="noopener">Open link in new tab</a>
             </div>`;
     }
@@ -2301,25 +2362,6 @@ Rules:
     async function renderTextViewer(resource, file) {
         const text = await file.text();
         els.workspaceViewer.innerHTML = `<pre class="text-viewer">${escapeHtml(text)}</pre>`;
-    }
-
-    // Word documents (.docx): converted to HTML entirely in the browser
-    // using Mammoth.js — the file never leaves the device and no native
-    // document-viewer app is invoked, so this stays inside the Study
-    // Companion just like every other resource type here.
-    async function renderDocxViewer(resource, file) {
-        if (!window.mammoth) {
-            renderUnsupportedViewer(resource, currentBlobUrl, true);
-            return;
-        }
-        try {
-            const arrayBuffer = await file.arrayBuffer();
-            const result = await window.mammoth.convertToHtml({ arrayBuffer });
-            els.workspaceViewer.innerHTML = `<div class="docx-viewer">${result.value}</div>`;
-        } catch (error) {
-            console.warn("Could not render .docx file.", error);
-            renderUnsupportedViewer(resource, currentBlobUrl, true);
-        }
     }
 
     // Unsupported file types never redirect automatically. The student
