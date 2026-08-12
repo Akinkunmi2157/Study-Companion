@@ -44,6 +44,8 @@
                 body: { prompt: promptText }
             });
 
+            console.log("GEMINI RAW RESPONSE >>>", JSON.stringify({ data, error }, null, 2));
+
             if (error) {
                 console.error("Gemini Edge Function Error:", error);
                 showToast("Failed to reach Gemini AI.", "error");
@@ -138,6 +140,7 @@
         workspaceTitle: document.getElementById("workspaceTitle"),
         workspaceViewer: document.getElementById("workspaceViewer"),
         closeWorkspace: document.getElementById("closeWorkspace"),
+        toggleWorkspaceFullscreen: document.getElementById("toggleWorkspaceFullscreen"),
 
         dashboardStreak: document.getElementById("dashboardStreak"),
         dashboardHours: document.getElementById("dashboardHours"),
@@ -1513,7 +1516,6 @@ Rules:
             </label>`).join("");
         els.assessmentValidation.textContent = "";
     }
-
     async function saveReflection() {
         if (!timer.pendingCompletion || els.saveReflection.disabled) return;
 
@@ -1534,6 +1536,7 @@ Rules:
 
         try {
             const assessment = await verifySummaryAndGenerateAssessment(summary, resource, task);
+
             if (!assessment.aligned) {
                 els.reflectionAlignment.className = "alignment-status visible mismatch";
                 els.reflectionAlignment.textContent = `${assessment.feedback} Alignment score: ${assessment.alignmentScore}%. Revise the summary before continuing.`;
@@ -1544,14 +1547,116 @@ Rules:
             renderAssessment(assessment);
             closeModal(els.reflectionModal);
             openModal(els.assessmentModal);
+
         } catch (error) {
-            console.error(error);
+            console.error("Reflection verification failed:", error);
             els.reflectionAlignment.className = "alignment-status visible mismatch";
             els.reflectionAlignment.textContent = error.message || "The summary could not be checked. Please try again.";
         } finally {
+            // Reset button text and force re-evaluation of disabled state
             els.saveReflection.textContent = "Check summary & continue";
-            validateReflection();
+
+            // Re-enable the button if summary meets length requirements
+            if (typeof validateReflection === 'function') {
+                validateReflection();
+            } else {
+                els.saveReflection.disabled = false;
+            }
         }
+    }
+
+    // -------------------------------------------------------------
+    // Post-submission results review ("explanation-on-demand")
+    //
+    // Builds a lightweight review modal on the fly (reusing the same
+    // .modal-backdrop / .modal-card / .assessment-question CSS classes
+    // already defined for the assessment modal, so no new styles are
+    // needed) that shows each objective question with the student's
+    // answer, the correct answer, and the explanation Gemini already
+    // generated in normaliseAssessment(). This data was previously
+    // discarded after scoring.
+    // -------------------------------------------------------------
+    function openAssessmentResultsModal(assessment, objectiveAnswers, theoryAnswers, objectiveScore, onContinue) {
+        const backdrop = document.createElement("div");
+        backdrop.className = "modal-backdrop";
+
+        const objectiveHtml = assessment.objectiveQuestions.map((item, index) => {
+            const selected = objectiveAnswers[index];
+            const correct = item.correctAnswer;
+            const isCorrect = selected === correct;
+            const optionsHtml = item.options.map((option, optionIndex) => {
+                let marker = "";
+                let style = "";
+                if (optionIndex === correct) {
+                    marker = "✓ ";
+                    style = "color:var(--success);font-weight:700;";
+                } else if (optionIndex === selected) {
+                    marker = "✗ ";
+                    style = "color:var(--danger);font-weight:700;";
+                }
+                return `<label class="assessment-option" style="${style}"><span>${marker}${escapeHtml(option)}</span></label>`;
+            }).join("");
+
+            return `
+                <fieldset class="assessment-question">
+                    <legend>${index + 1}. ${escapeHtml(item.question)}
+                        <span style="margin-left:8px;font-weight:800;color:${isCorrect ? "var(--success)" : "var(--danger)"};">
+                            ${isCorrect ? "Correct" : "Incorrect"}
+                        </span>
+                    </legend>
+                    ${optionsHtml}
+                    ${item.explanation ? `<p style="margin:12px 4px 0;color:var(--muted);font-size:.8rem;line-height:1.55;"><strong style="color:var(--text);">Why:</strong> ${escapeHtml(item.explanation)}</p>` : ""}
+                </fieldset>
+            `;
+        }).join("");
+
+        const theoryHtml = assessment.theoryQuestions.map((item, index) => `
+            <div class="assessment-question theory-question">
+                <strong>${index + 1}. ${escapeHtml(item.question)}</strong>
+                <p style="margin:0;color:var(--text);line-height:1.6;"><strong>Your answer:</strong> ${escapeHtml(theoryAnswers[index] || "")}</p>
+                <p style="margin:0;color:var(--muted);line-height:1.6;"><strong>Model answer:</strong> ${escapeHtml(item.modelAnswer)}</p>
+            </div>
+        `).join("");
+
+        backdrop.innerHTML = `
+            <div class="modal-card assessment-card">
+                <div class="modal-header">
+                    <div>
+                        <p class="eyebrow">Session results</p>
+                        <h3>Review your answers</h3>
+                    </div>
+                </div>
+                <div class="assessment-summary-status ${objectiveScore >= 6 ? "match" : "mismatch"}">
+                    <strong>Objective score: ${objectiveScore}/${assessment.objectiveQuestions.length}</strong>
+                    <p>Go through each question below to see the correct answer and why it's correct.</p>
+                </div>
+                <section class="assessment-section">
+                    <h4>Objective questions</h4>
+                    <div class="assessment-question-list">${objectiveHtml}</div>
+                </section>
+                <section class="assessment-section">
+                    <h4>Theory questions</h4>
+                    <div class="assessment-question-list">${theoryHtml}</div>
+                </section>
+                <div class="modal-actions">
+                    <button class="primary-button" id="closeAssessmentResultsButton">Continue</button>
+                </div>
+            </div>
+        `;
+
+        document.body.appendChild(backdrop);
+        openModal(backdrop);
+
+        const finish = () => {
+            closeModal(backdrop);
+            backdrop.remove();
+            if (typeof onContinue === "function") onContinue();
+        };
+
+        backdrop.querySelector("#closeAssessmentResultsButton").addEventListener("click", finish);
+        backdrop.addEventListener("mousedown", event => {
+            if (event.target === backdrop) finish();
+        });
     }
 
     function submitAssessment(event) {
@@ -1599,14 +1704,19 @@ Rules:
         timer.pendingAssessment = null;
         timer.reflectionResourceKeywords = null;
 
-        const nextMode = timer.cycle >= state.settings.cyclesBeforeLongBreak ? "longBreak" : "shortBreak";
-        if (timer.cycle >= state.settings.cyclesBeforeLongBreak) timer.cycle = 1;
-        else timer.cycle += 1;
-        setTimerMode(nextMode, true);
-        els.sessionGoal.value = "";
-        els.goalCount.textContent = "0";
-        renderAll();
-        showToast(`Verified session logged. Objective score: ${objectiveScore}/10.`);
+        // Show the review-your-answers screen (with explanations) before
+        // advancing the timer, instead of jumping straight to the next
+        // break/focus cycle.
+        openAssessmentResultsModal(assessment, objectiveAnswers, theoryAnswers, objectiveScore, () => {
+            const nextMode = timer.cycle >= state.settings.cyclesBeforeLongBreak ? "longBreak" : "shortBreak";
+            if (timer.cycle >= state.settings.cyclesBeforeLongBreak) timer.cycle = 1;
+            else timer.cycle += 1;
+            setTimerMode(nextMode, true);
+            els.sessionGoal.value = "";
+            els.goalCount.textContent = "0";
+            renderAll();
+            showToast(`Verified session logged. Objective score: ${objectiveScore}/10.`);
+        });
     }
 
     function backToReflection() {
@@ -1669,6 +1779,7 @@ Rules:
           </td>
           <td>
             <button class="text-button" data-view-reflection="${session.id}">View</button>
+            ${session.assessment ? `<button class="text-button" data-view-results="${session.id}">Results</button>` : ""}
           </td>
         </tr>
       `).join("")
@@ -1681,6 +1792,25 @@ Rules:
         els.reflectionViewTitle.textContent = session.taskTitle || "Session reflection";
         els.reflectionViewText.textContent = session.reflection;
         openModal(els.reflectionViewModal);
+    }
+
+    // Re-open the explanation-on-demand review for a past session from
+    // the session history table, reusing the same modal builder used
+    // right after submission.
+    function viewSessionResults(id) {
+        const session = state.sessions.find(item => item.id === id);
+        if (!session || !session.assessment) return;
+        const assessment = {
+            objectiveQuestions: session.assessment.objectiveQuestions,
+            theoryQuestions: session.assessment.theoryQuestions
+        };
+        openAssessmentResultsModal(
+            assessment,
+            session.assessment.objectiveAnswers,
+            session.assessment.theoryAnswers,
+            session.assessment.objectiveScore,
+            () => { }
+        );
     }
 
     function populateSettings() {
@@ -1893,44 +2023,382 @@ Rules:
         }
     }
 
+    // -------------------------------------------------------------
+    // IN-APP RESOURCE VIEWER
+    //
+    // Every resource type below is rendered *inside* this page — no
+    // resource ever causes a real navigation away from the Study
+    // Companion, so the browser never has a reason to hand off to an
+    // external app (the actual root cause of the mobile "Open with…"
+    // problem). PDFs are rendered with pdf.js onto a <canvas> instead
+    // of relying on the platform's native PDF plugin (which mobile
+    // Chrome/Android often lacks inside an <iframe>, triggering the
+    // external hand-off). Only the explicit "unsupported file type"
+    // fallback link is a real, user-initiated external navigation —
+    // and that is intentional by design (see isResourceViewerOpen()
+    // below for how this interacts with the integrity system).
+    // -------------------------------------------------------------
+
+    // Tracks any cleanup needed for whatever is currently loaded into the
+    // workspace viewer (cancel an in-flight PDF render, remove pinch-zoom
+    // touch listeners, etc.) so switching or closing resources can't leak.
+    let activeViewerCleanup = null;
+
+    // -------------------------------------------------------------
+    // resourceViewerOpen — derived, not a settable flag.
+    //
+    // The integrity system needs to know whether the student is
+    // "still inside the Study Companion" even though the resource
+    // viewer is showing instead of the timer. Rather than a bare
+    // boolean anyone could flip from the console, this reads the
+    // real application state that everything else in the app also
+    // reads and writes: is a resource actually loaded
+    // (timer.activeResourceId) AND is the workspace panel that shows
+    // it actually visible in the DOM right now. Both of those are
+    // only ever set together, by openStudyResource()/closeStudyWorkspace(),
+    // which are themselves only reachable through real UI navigation
+    // (clicking "Open & study", clicking "Back"). There is no code
+    // path that sets one without the other.
+    // -------------------------------------------------------------
+    function isResourceViewerOpen() {
+        return Boolean(
+            timer.activeResourceId &&
+            els.studyWorkspace &&
+            !els.studyWorkspace.classList.contains("hidden")
+        );
+    }
+
+    function isTextLikeResource(resource) {
+        return (
+            resource.mimeType.startsWith("text/") ||
+            /\.(txt|md|csv|json|log)$/i.test(resource.fileName || "")
+        );
+    }
+
+    function teardownResourceViewer() {
+        if (typeof activeViewerCleanup === "function") {
+            try { activeViewerCleanup(); } catch (error) { console.warn("Viewer cleanup failed.", error); }
+        }
+        activeViewerCleanup = null;
+        revokeBlobUrl();
+    }
+
     async function openStudyResource(id, taskId = "") {
         const resource = getResource(id);
         if (!resource) return showToast("That resource is no longer available.", "error");
 
-        revokeBlobUrl();
+        // Tear down whatever the previous resource left behind (blob URLs,
+        // pinch-zoom listeners, in-flight PDF page renders) before loading
+        // the next one.
+        teardownResourceViewer();
+
         timer.activeResourceId = resource.id;
 
         els.workspaceTitle.textContent = resource.title;
         els.workspaceViewer.innerHTML = `<div class="viewer-loading">Opening resource…</div>`;
         els.studyWorkspace.classList.remove("hidden");
         navigate("timer");
-        if (taskId) els.sessionTask.value = taskId;
-        else els.sessionTask.value = "";
-        let content = "";
+        els.sessionTask.value = taskId || "";
+
         if (resource.kind === "link") {
-            const safeUrl = escapeHtml(resource.url);
-            const youtube = resource.url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/)([\w-]+)/);
-            content = youtube ? `<iframe src="https://www.youtube.com/embed/${youtube[1]}" title="${escapeHtml(resource.title)}" allowfullscreen></iframe>` : `<div class="external-resource"><div class="resource-card__icon">🔗</div><h3>${escapeHtml(resource.title)}</h3><p>This resource opens on its original website.</p><a class="primary-button link-button" href="${safeUrl}" target="_blank" rel="noopener">Open resource in new tab</a></div>`;
-        } else {
-            const file = await getResourceFileBlob(resource);
-            if (!file) content = `<div class="empty-state">This file could not be loaded from your cloud library. Check your connection and try again.</div>`;
-            else {
-                currentBlobUrl = URL.createObjectURL(file);
-                if (resource.mimeType.startsWith("video/")) content = `<video controls src="${currentBlobUrl}"></video>`;
-                else if (resource.mimeType.startsWith("audio/")) content = `<audio controls src="${currentBlobUrl}"></audio>`;
-                else if (resource.mimeType === "application/pdf" || resource.mimeType.startsWith("image/") || resource.mimeType.startsWith("text/")) content = resource.mimeType.startsWith("image/") ? `<img src="${currentBlobUrl}" alt="${escapeHtml(resource.title)}" />` : `<iframe src="${currentBlobUrl}" title="${escapeHtml(resource.title)}"></iframe>`;
-                else content = `<div class="external-resource"><div class="resource-card__icon">📄</div><h3>${escapeHtml(resource.fileName)}</h3><p>This file type cannot be previewed directly. Open it with a compatible app.</p><a class="primary-button link-button" href="${currentBlobUrl}" download="${escapeHtml(resource.fileName)}">Open file</a></div>`;
-            }
+            renderLinkViewer(resource);
+            els.studyWorkspace.scrollIntoView({ behavior: "smooth", block: "start" });
+            return;
         }
-        els.workspaceViewer.innerHTML = content;
+
+        const file = await getResourceFileBlob(resource);
+        if (!file) {
+            els.workspaceViewer.innerHTML = `<div class="empty-state">This file could not be loaded from your cloud library. Check your connection and try again.</div>`;
+            els.studyWorkspace.scrollIntoView({ behavior: "smooth", block: "start" });
+            return;
+        }
+
+        currentBlobUrl = URL.createObjectURL(file);
+
+        try {
+            if (resource.mimeType === "application/pdf") {
+                await renderPdfViewer(resource, file);
+            } else if (resource.mimeType.startsWith("image/")) {
+                renderImageViewer(resource, currentBlobUrl);
+            } else if (resource.mimeType.startsWith("video/")) {
+                renderVideoViewer(resource, currentBlobUrl);
+            } else if (resource.mimeType.startsWith("audio/")) {
+                renderAudioViewer(resource, currentBlobUrl);
+            } else if (isTextLikeResource(resource)) {
+                await renderTextViewer(resource, file);
+            } else {
+                renderUnsupportedViewer(resource, currentBlobUrl, false);
+            }
+        } catch (error) {
+            console.warn("Resource viewer failed to render — falling back to a download option.", error);
+            renderUnsupportedViewer(resource, currentBlobUrl, true);
+        }
+
         els.studyWorkspace.scrollIntoView({ behavior: "smooth", block: "start" });
     }
 
+    function renderLinkViewer(resource) {
+        const safeUrl = escapeHtml(resource.url);
+        const youtube = resource.url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/)([\w-]+)/);
+        if (youtube) {
+            els.workspaceViewer.innerHTML = `<iframe src="https://www.youtube.com/embed/${youtube[1]}" title="${escapeHtml(resource.title)}" allow="autoplay; encrypted-media; picture-in-picture" allowfullscreen></iframe>`;
+            return;
+        }
+        els.workspaceViewer.innerHTML = `
+            <div class="external-resource">
+                <div class="resource-card__icon">🔗</div>
+                <h3>${escapeHtml(resource.title)}</h3>
+                <p>This is a web link, so it opens on its original website in a new browser tab.</p>
+                <a class="primary-button link-button" href="${safeUrl}" target="_blank" rel="noopener">Open link in new tab</a>
+            </div>`;
+    }
+
+    // Images: rendered directly in-page with a lightweight custom
+    // pinch-to-zoom / double-tap-to-zoom / drag-to-pan controller, plus
+    // on-screen +/- buttons for desktop and accessibility. No native
+    // browser zoom or navigation is involved.
+    function renderImageViewer(resource, blobUrl) {
+        els.workspaceViewer.innerHTML = `
+            <div class="image-lightbox" id="imageLightbox">
+                <div class="image-lightbox__stage">
+                    <img src="${blobUrl}" alt="${escapeHtml(resource.title)}" id="lightboxImage" draggable="false" />
+                </div>
+                <div class="viewer-toolbar image-toolbar">
+                    <button type="button" class="icon-button" id="imageZoomOut" aria-label="Zoom out">−</button>
+                    <span id="imageZoomLevel">100%</span>
+                    <button type="button" class="icon-button" id="imageZoomIn" aria-label="Zoom in">+</button>
+                    <button type="button" class="secondary-button" id="imageZoomReset">Reset</button>
+                </div>
+            </div>`;
+        activeViewerCleanup = attachImageZoom();
+    }
+
+    function attachImageZoom() {
+        const stage = els.workspaceViewer.querySelector(".image-lightbox__stage");
+        const img = document.getElementById("lightboxImage");
+        const zoomLevelLabel = document.getElementById("imageZoomLevel");
+        const zoomInButton = document.getElementById("imageZoomIn");
+        const zoomOutButton = document.getElementById("imageZoomOut");
+        const zoomResetButton = document.getElementById("imageZoomReset");
+        if (!stage || !img) return null;
+
+        let scale = 1;
+        let originX = 0;
+        let originY = 0;
+        let isPanning = false;
+        let panStartX = 0;
+        let panStartY = 0;
+        let pinchStartDistance = 0;
+        let pinchStartScale = 1;
+        let lastTapTime = 0;
+
+        function applyTransform() {
+            img.style.transform = `translate(${originX}px, ${originY}px) scale(${scale})`;
+            zoomLevelLabel.textContent = `${Math.round(scale * 100)}%`;
+            stage.classList.toggle("zoomed", scale > 1);
+        }
+
+        function setScale(next) {
+            scale = Math.min(4, Math.max(1, next));
+            if (scale === 1) { originX = 0; originY = 0; }
+            applyTransform();
+        }
+
+        function pointerDistance(touches) {
+            const [a, b] = touches;
+            return Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+        }
+
+        function onTouchStart(event) {
+            if (event.touches.length === 2) {
+                pinchStartDistance = pointerDistance(event.touches);
+                pinchStartScale = scale;
+            } else if (event.touches.length === 1 && scale > 1) {
+                isPanning = true;
+                panStartX = event.touches[0].clientX - originX;
+                panStartY = event.touches[0].clientY - originY;
+            }
+        }
+
+        function onTouchMove(event) {
+            if (event.touches.length === 2) {
+                event.preventDefault();
+                const distance = pointerDistance(event.touches);
+                if (pinchStartDistance > 0) setScale(pinchStartScale * (distance / pinchStartDistance));
+            } else if (event.touches.length === 1 && isPanning) {
+                event.preventDefault();
+                originX = event.touches[0].clientX - panStartX;
+                originY = event.touches[0].clientY - panStartY;
+                applyTransform();
+            }
+        }
+
+        function onTouchEnd() {
+            isPanning = false;
+            const now = Date.now();
+            if (now - lastTapTime < 320) setScale(scale > 1 ? 1 : 2);
+            lastTapTime = now;
+        }
+
+        stage.addEventListener("touchstart", onTouchStart, { passive: true });
+        stage.addEventListener("touchmove", onTouchMove, { passive: false });
+        stage.addEventListener("touchend", onTouchEnd);
+        zoomInButton.addEventListener("click", () => setScale(scale + 0.5));
+        zoomOutButton.addEventListener("click", () => setScale(scale - 0.5));
+        zoomResetButton.addEventListener("click", () => setScale(1));
+        img.addEventListener("dblclick", () => setScale(scale > 1 ? 1 : 2));
+
+        return () => {
+            stage.removeEventListener("touchstart", onTouchStart);
+            stage.removeEventListener("touchmove", onTouchMove);
+            stage.removeEventListener("touchend", onTouchEnd);
+        };
+    }
+
+    // Video/audio: native <video>/<audio> with `playsinline` so Android
+    // and iOS play the media inline inside this page instead of handing
+    // off to a native fullscreen/system player (the other common cause
+    // of an unwanted "left the app" moment on mobile).
+    function renderVideoViewer(resource, blobUrl) {
+        els.workspaceViewer.innerHTML = `<video controls playsinline webkit-playsinline preload="metadata" src="${blobUrl}"></video>`;
+    }
+
+    function renderAudioViewer(resource, blobUrl) {
+        els.workspaceViewer.innerHTML = `
+            <div class="audio-player-wrap">
+                <div class="resource-card__icon">🎧</div>
+                <p>${escapeHtml(resource.title)}</p>
+                <audio controls preload="metadata" src="${blobUrl}"></audio>
+            </div>`;
+    }
+
+    async function renderTextViewer(resource, file) {
+        const text = await file.text();
+        els.workspaceViewer.innerHTML = `<pre class="text-viewer">${escapeHtml(text)}</pre>`;
+    }
+
+    // Unsupported file types never redirect automatically. The student
+    // gets a plain explanation plus an explicit, deliberate "download or
+    // open externally" action — the one case in this viewer where
+    // choosing to proceed really does mean leaving the Study Companion,
+    // so normal integrity behaviour is expected to apply if that happens.
+    function renderUnsupportedViewer(resource, blobUrl, isFallback) {
+        const message = isFallback
+            ? "This file couldn't be opened in the built-in viewer."
+            : "The Study Companion can't preview this file type directly.";
+        els.workspaceViewer.innerHTML = `
+            <div class="external-resource">
+                <div class="resource-card__icon">📄</div>
+                <h3>${escapeHtml(resource.fileName || resource.title)}</h3>
+                <p>${message} You can download it or open it in another app instead.</p>
+                <a class="primary-button link-button" href="${blobUrl}" download="${escapeHtml(resource.fileName || resource.title)}" target="_blank" rel="noopener">Download / open externally</a>
+            </div>`;
+    }
+
+    // PDFs: rendered page-by-page onto a <canvas> using pdf.js, with
+    // page navigation and zoom controls, inside a natively touch-
+    // scrollable container. This is the core fix for the mobile bug —
+    // there is no native PDF plugin dependency and no iframe pointed at
+    // a blob URL, so mobile Chrome never has a reason to offer an
+    // "Open with…" hand-off.
+    async function renderPdfViewer(resource, file) {
+        if (!window.pdfjsLib) {
+            renderUnsupportedViewer(resource, currentBlobUrl, true);
+            return;
+        }
+
+        const bytes = new Uint8Array(await file.arrayBuffer());
+        const pdf = await window.pdfjsLib.getDocument({ data: bytes }).promise;
+
+        els.workspaceViewer.innerHTML = `
+            <div class="pdf-viewer" id="pdfViewer">
+                <div class="viewer-toolbar pdf-toolbar">
+                    <button type="button" class="icon-button" id="pdfPrevPage" aria-label="Previous page">‹</button>
+                    <span id="pdfPageIndicator">Page 1 of ${pdf.numPages}</span>
+                    <button type="button" class="icon-button" id="pdfNextPage" aria-label="Next page">›</button>
+                    <span class="pdf-toolbar__spacer"></span>
+                    <button type="button" class="icon-button" id="pdfZoomOut" aria-label="Zoom out">−</button>
+                    <span id="pdfZoomLevel">100%</span>
+                    <button type="button" class="icon-button" id="pdfZoomIn" aria-label="Zoom in">+</button>
+                </div>
+                <div class="pdf-canvas-scroll" id="pdfCanvasScroll">
+                    <canvas id="pdfCanvas"></canvas>
+                </div>
+            </div>`;
+
+        const canvas = document.getElementById("pdfCanvas");
+        const scrollArea = document.getElementById("pdfCanvasScroll");
+        const pageIndicator = document.getElementById("pdfPageIndicator");
+        const zoomLevelLabel = document.getElementById("pdfZoomLevel");
+        let pageNumber = 1;
+        let zoom = 1;
+        let renderTask = null;
+        let destroyed = false;
+
+        async function renderPage() {
+            if (destroyed) return;
+            const page = await pdf.getPage(pageNumber);
+            const baseViewport = page.getViewport({ scale: 1 });
+            const fitScale = Math.max(0.2, (scrollArea.clientWidth - 24) / baseViewport.width);
+            const viewport = page.getViewport({ scale: fitScale * zoom });
+
+            canvas.width = Math.floor(viewport.width);
+            canvas.height = Math.floor(viewport.height);
+
+            if (renderTask) renderTask.cancel();
+            const context = canvas.getContext("2d");
+            renderTask = page.render({ canvasContext: context, viewport });
+            try {
+                await renderTask.promise;
+            } catch (error) {
+                if (error?.name !== "RenderingCancelledException") throw error;
+            }
+
+            pageIndicator.textContent = `Page ${pageNumber} of ${pdf.numPages}`;
+            zoomLevelLabel.textContent = `${Math.round(zoom * 100)}%`;
+        }
+
+        document.getElementById("pdfPrevPage").addEventListener("click", () => {
+            if (pageNumber > 1) { pageNumber -= 1; renderPage(); }
+        });
+        document.getElementById("pdfNextPage").addEventListener("click", () => {
+            if (pageNumber < pdf.numPages) { pageNumber += 1; renderPage(); }
+        });
+        document.getElementById("pdfZoomIn").addEventListener("click", () => {
+            zoom = Math.min(3, zoom + 0.25); renderPage();
+        });
+        document.getElementById("pdfZoomOut").addEventListener("click", () => {
+            zoom = Math.max(0.5, zoom - 0.25); renderPage();
+        });
+
+        await renderPage();
+
+        activeViewerCleanup = () => {
+            destroyed = true;
+            if (renderTask) renderTask.cancel();
+            pdf.destroy?.();
+        };
+    }
+
     function closeStudyWorkspace() {
+        els.studyWorkspace.classList.remove("workspace-fullscreen");
         els.studyWorkspace.classList.add("hidden");
         els.workspaceViewer.innerHTML = "";
         timer.activeResourceId = null;
-        revokeBlobUrl();
+        teardownResourceViewer();
+    }
+
+    // CSS-only "full screen" mode for the workspace panel (position:
+    // fixed covering the viewport). Deliberately NOT the browser
+    // Fullscreen API — the focus timer already uses that API for its
+    // own distraction-free mode, and layering a second, independent
+    // fullscreen request on top of it would create exactly the kind of
+    // fullscreenchange ambiguity the integrity system needs to avoid.
+    function toggleWorkspaceFullscreen() {
+        const isFullscreen = els.studyWorkspace.classList.toggle("workspace-fullscreen");
+        if (els.toggleWorkspaceFullscreen) {
+            els.toggleWorkspaceFullscreen.textContent = isFullscreen ? "⤡ Exit full screen" : "⤢ Full screen";
+        }
     }
 
     function planResourceTask(id) { const resource = getResource(id); if (!resource) return; openTaskEditor({ title: `Study: ${resource.title}`, description: resource.notes || `Study ${resource.title}`, priority: "medium", dueDate: "", status: "todo", resourceId: id }); }
@@ -1987,6 +2455,15 @@ Rules:
             timer.mode === "focus" &&
             state.settings.focusTracking
         ) {
+            // The student is inside the Study Companion's own resource
+            // viewer, not a different tab/app. This is the "internal
+            // navigation" case the integrity system is meant to recognise
+            // — it does not flag a violation or pause the timer. This is
+            // the *only* condition suppressed; every other document.hidden
+            // trigger (real tab switch, minimizing, another app) still
+            // behaves exactly as before.
+            if (isResourceViewerOpen()) return;
+
             timer.focusViolations += 1;
             timer.automaticallyPausedByBlur = true;
             pauseTimer("Paused: tab hidden");
@@ -2013,6 +2490,11 @@ Rules:
             state.settings.focusTracking &&
             !document.hidden
         ) {
+            // Same reasoning as handleVisibilityChange(): opening the
+            // in-app resource viewer must not register as the window
+            // losing focus to something outside the Study Companion.
+            if (isResourceViewerOpen()) return;
+
             timer.focusViolations += 1;
             timer.automaticallyPausedByBlur = true;
             pauseTimer("Paused: window lost focus");
@@ -2028,6 +2510,14 @@ Rules:
             timer.mode === "focus" &&
             state.settings.focusTracking
         ) {
+            // The resource viewer never requests the browser Fullscreen
+            // API (see toggleWorkspaceFullscreen() above), so this
+            // listener still only ever fires for the study session's own
+            // fullscreen mode exiting. The isResourceViewerOpen() guard is
+            // kept here too for defence-in-depth, in case a future viewer
+            // type legitimately needs real fullscreen.
+            if (isResourceViewerOpen()) return;
+
             timer.focusViolations += 1;
             timer.automaticallyPausedByBlur = true;
             pauseTimer("Paused: left fullscreen");
@@ -2073,6 +2563,7 @@ Rules:
         els.resourceSearch.addEventListener("input", renderResources);
         els.resourceTypeFilter.addEventListener("change", renderResources);
         els.closeWorkspace.addEventListener("click", closeStudyWorkspace);
+        if (els.toggleWorkspaceFullscreen) els.toggleWorkspaceFullscreen.addEventListener("click", toggleWorkspaceFullscreen);
         els.profileForm.addEventListener("submit", saveProfile);
         [els.profilePhotoButton, els.changeProfilePhoto].forEach(button => button.addEventListener("click", () => els.profilePhotoInput.click()));
         els.profilePhotoInput.addEventListener("change", uploadProfilePhoto);
@@ -2116,6 +2607,9 @@ Rules:
 
             const reflectionButton = event.target.closest("[data-view-reflection]");
             if (reflectionButton) viewReflection(reflectionButton.dataset.viewReflection);
+
+            const resultsButton = event.target.closest("[data-view-results]");
+            if (resultsButton) viewSessionResults(resultsButton.dataset.viewResults);
         });
 
         document.querySelectorAll(".modal-backdrop").forEach(backdrop => {
