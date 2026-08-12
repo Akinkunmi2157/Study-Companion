@@ -125,6 +125,11 @@
         resourceTitle: document.getElementById("resourceTitle"),
         resourceKind: document.getElementById("resourceKind"),
         resourceFile: document.getElementById("resourceFile"),
+        resourceFileDrop: document.getElementById("resourceFileDrop"),
+        resourceFileIcon: document.getElementById("resourceFileIcon"),
+        resourceFileLabel: document.getElementById("resourceFileLabel"),
+        resourceFileName: document.getElementById("resourceFileName"),
+        resourceFileClear: document.getElementById("resourceFileClear"),
         resourceUrl: document.getElementById("resourceUrl"),
         resourceNotes: document.getElementById("resourceNotes"),
         resourceFileGroup: document.getElementById("resourceFileGroup"),
@@ -1947,6 +1952,55 @@ Rules:
         els.resourceUrlGroup.classList.toggle("hidden", !isLink);
     }
 
+    // -------------------------------------------------------------
+    // Custom file-drop control for #resourceFile
+    // Replaces the native <input type="file"> "Choose file" chrome with
+    // a themed drop zone: shows a type-aware icon, filename + size once
+    // a file is chosen, and a clear (✕) button. The underlying native
+    // input is still what saveResource() reads from — only its visual
+    // presentation changes.
+    // -------------------------------------------------------------
+    function fileKindLabel(file) {
+        const type = file.type || "";
+        if (type.startsWith("video/")) return { icon: "🎬", label: "Video selected" };
+        if (type.startsWith("audio/")) return { icon: "🎧", label: "Audio selected" };
+        if (type.startsWith("image/")) return { icon: "🖼️", label: "Image selected" };
+        if (type === "application/pdf") return { icon: "📄", label: "PDF selected" };
+        return { icon: "📄", label: "File selected" };
+    }
+
+    function updateFileDropDisplay() {
+        if (!els.resourceFileDrop) return;
+        const file = els.resourceFile.files[0];
+        if (!file) {
+            els.resourceFileDrop.classList.remove("has-file");
+            els.resourceFileIcon.textContent = "📎";
+            els.resourceFileLabel.textContent = "Choose a document or video";
+            els.resourceFileName.textContent = "No file chosen";
+            return;
+        }
+        const { icon, label } = fileKindLabel(file);
+        els.resourceFileDrop.classList.add("has-file");
+        els.resourceFileIcon.textContent = icon;
+        els.resourceFileLabel.textContent = label;
+        els.resourceFileName.textContent = `${file.name} · ${humanFileSize(file.size)}`;
+    }
+
+    function clearFileDrop() {
+        els.resourceFile.value = "";
+        updateFileDropDisplay();
+    }
+
+    function bindFileDropEvents() {
+        if (!els.resourceFileDrop) return;
+        els.resourceFile.addEventListener("change", updateFileDropDisplay);
+        els.resourceFileClear.addEventListener("click", event => {
+            event.preventDefault();
+            event.stopPropagation();
+            clearFileDrop();
+        });
+    }
+
     async function saveResource(event) {
         event.preventDefault();
         const kind = els.resourceKind.value;
@@ -2138,104 +2192,17 @@ Rules:
     }
 
     function renderLinkViewer(resource) {
+        const safeUrl = escapeHtml(resource.url);
         const youtube = resource.url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/)([\w-]+)/);
         if (youtube) {
             els.workspaceViewer.innerHTML = `<iframe src="https://www.youtube.com/embed/${youtube[1]}" title="${escapeHtml(resource.title)}" allow="autoplay; encrypted-media; picture-in-picture" allowfullscreen></iframe>`;
             return;
         }
-        renderEmbeddedLinkViewer(resource);
-    }
-
-    // Generic web links: try to load the page inside an in-page iframe
-    // first, so the student never has to leave the Study Companion.
-    //
-    // The browser gives no clean, synchronous "this site refused to be
-    // embedded" signal — sites that block framing (via X-Frame-Options /
-    // frame-ancestors CSP) just render a blank/broken frame instead of
-    // throwing a catchable error. So this uses a best-effort heuristic:
-    // - If the iframe's own 'load' event fires, we treat the embed as
-    //   successful and reveal it.
-    // - If nothing loads within a short window, we assume the site
-    //   blocked embedding and fall back to the explicit "open externally"
-    //   card instead of leaving the student staring at a blank panel.
-    // This can't be 100% certain in every browser, but it means the large
-    // majority of embeddable sites now load right inside the app, and the
-    // few that actively refuse still degrade gracefully instead of
-    // silently failing.
-    function renderEmbeddedLinkViewer(resource) {
-        const safeUrl = escapeHtml(resource.url);
-        const frameId = `embeddedFrame-${resource.id}`;
-
-        els.workspaceViewer.innerHTML = `
-            <div class="embedded-link-viewer" id="embeddedLinkViewer">
-                <div class="viewer-toolbar embedded-toolbar">
-                    <span class="embedded-link-label" title="${safeUrl}">${escapeHtml(resource.title)}</span>
-                    <span class="embedded-link-status" id="embeddedLinkStatus">Loading…</span>
-                </div>
-                <div class="embedded-frame-stage">
-                    <div class="viewer-loading" id="embeddedLinkLoading">Loading this link inside the Study Companion…</div>
-                    <iframe
-                        id="${frameId}"
-                        class="embedded-frame hidden"
-                        src="${safeUrl}"
-                        title="${escapeHtml(resource.title)}"
-                        referrerpolicy="no-referrer-when-downgrade"
-                        sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-presentation"
-                        loading="eager">
-                    </iframe>
-                </div>
-            </div>`;
-
-        const frame = document.getElementById(frameId);
-        const loadingEl = document.getElementById("embeddedLinkLoading");
-        const statusEl = document.getElementById("embeddedLinkStatus");
-        if (!frame) return;
-
-        let settled = false;
-
-        const revealEmbedded = () => {
-            if (settled) return;
-            settled = true;
-            frame.classList.remove("hidden");
-            if (loadingEl) loadingEl.remove();
-            if (statusEl) statusEl.textContent = "Loaded in-app";
-            window.clearTimeout(fallbackTimeoutId);
-        };
-
-        const fallbackToExternal = () => {
-            if (settled) return;
-            settled = true;
-            renderUnembeddableLinkViewer(resource);
-        };
-
-        frame.addEventListener("load", revealEmbedded, { once: true });
-        frame.addEventListener("error", fallbackToExternal, { once: true });
-
-        // Sites that block framing typically never fire a usable 'load'
-        // with real content (or fire it near-instantly with an empty
-        // frame). Give slow-but-legitimate pages a generous window before
-        // assuming the embed failed.
-        const fallbackTimeoutId = window.setTimeout(() => {
-            if (!settled) fallbackToExternal();
-        }, 6000);
-
-        activeViewerCleanup = () => {
-            window.clearTimeout(fallbackTimeoutId);
-            frame.removeEventListener("load", revealEmbedded);
-            frame.removeEventListener("error", fallbackToExternal);
-        };
-    }
-
-    // Fallback shown only when a site actively refuses to be embedded
-    // (or fails to load) — the one case where continuing really does
-    // mean leaving the Study Companion in a new tab.
-    function renderUnembeddableLinkViewer(resource) {
-        const safeUrl = escapeHtml(resource.url);
         els.workspaceViewer.innerHTML = `
             <div class="external-resource">
                 <div class="resource-card__icon">🔗</div>
                 <h3>${escapeHtml(resource.title)}</h3>
-                <p>This site doesn't allow itself to be shown inside another page (a security setting the site controls, not the Study Companion). You can still open it in a new tab.</p>
+                <p>This is a web link, so it opens on its original website in a new browser tab.</p>
                 <a class="primary-button link-button" href="${safeUrl}" target="_blank" rel="noopener">Open link in new tab</a>
             </div>`;
     }
@@ -2373,10 +2340,15 @@ Rules:
         const message = isFallback
             ? "This file couldn't be opened in the built-in viewer."
             : "The Study Companion can't preview this file type directly.";
+        const meta = [
+            (resource.fileName || "").split(".").pop()?.toUpperCase() || null,
+            resource.fileSize ? humanFileSize(resource.fileSize) : null
+        ].filter(Boolean).join(" · ");
         els.workspaceViewer.innerHTML = `
             <div class="external-resource">
                 <div class="resource-card__icon">📄</div>
                 <h3>${escapeHtml(resource.fileName || resource.title)}</h3>
+                ${meta ? `<p class="external-resource__meta">${escapeHtml(meta)}</p>` : ""}
                 <p>${message} You can download it or open it in another app instead.</p>
                 <a class="primary-button link-button" href="${blobUrl}" download="${escapeHtml(resource.fileName || resource.title)}" target="_blank" rel="noopener">Download / open externally</a>
             </div>`;
@@ -2644,7 +2616,12 @@ Rules:
         });
 
         els.profileShortcut.addEventListener("click", () => navigate("profile"));
-        els.openResourceModal.addEventListener("click", () => { els.resourceForm.reset(); toggleResourceFields(); openModal(els.resourceModal); });
+        els.openResourceModal.addEventListener("click", () => {
+            els.resourceForm.reset();
+            updateFileDropDisplay();
+            toggleResourceFields();
+            openModal(els.resourceModal);
+        });
         els.resourceKind.addEventListener("change", toggleResourceFields);
         els.resourceForm.addEventListener("submit", saveResource);
         els.resourceSearch.addEventListener("input", renderResources);
@@ -2656,6 +2633,7 @@ Rules:
         els.profilePhotoInput.addEventListener("change", uploadProfilePhoto);
         els.removeProfilePhoto.addEventListener("click", removeProfilePhoto);
         els.logoutButton.addEventListener("click", logout);
+        bindFileDropEvents();
 
         els.openTaskModal.addEventListener("click", () => openTaskEditor());
         els.taskForm.addEventListener("submit", saveTask);
