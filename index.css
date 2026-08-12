@@ -730,7 +730,166 @@ button:disabled {
     border-color: var(--primary);
     box-shadow: 0 0 0 4px var(--primary-soft);
 }
+/* ============================================================
+   Resource modal — custom file input, select chevron, button hierarchy
+   Add this block to index.css (anywhere after the base .form-control rules)
+   ============================================================ */
 
+/* Custom select chevron (replaces native browser arrow) */
+select.form-control {
+    appearance: none;
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    padding-right: 40px;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='11' height='7' viewBox='0 0 11 7' fill='none'%3E%3Cpath d='M1 1L5.5 5.5L10 1' stroke='%2370788d' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 14px center;
+    background-size: 11px 7px;
+    cursor: pointer;
+}
+
+body.dark select.form-control {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='11' height='7' viewBox='0 0 11 7' fill='none'%3E%3Cpath d='M1 1L5.5 5.5L10 1' stroke='%23a7aec1' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+}
+
+/* Custom file picker — replaces the raw <input type="file"> chrome control.
+   Markup: wrap the existing #resourceFile input in a .file-drop container
+   (see resource-modal-markup.html for the exact structure). The native
+   input is visually hidden but still fully functional/accessible; a styled
+   label acts as the button and a status row shows the picked file. */
+.file-drop {
+    position: relative;
+}
+
+.file-drop input[type="file"] {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    opacity: 0;
+    cursor: pointer;
+    z-index: 2;
+}
+
+.file-drop__surface {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    min-height: 44px;
+    padding: 13px 16px;
+    border: 1px dashed var(--border);
+    border-radius: 11px;
+    background: var(--surface-soft);
+    transition: border-color .18s ease, background .18s ease;
+}
+
+.file-drop:hover .file-drop__surface,
+.file-drop:focus-within .file-drop__surface {
+    border-color: var(--primary);
+    background: var(--primary-soft);
+}
+
+.file-drop__icon {
+    flex: 0 0 34px;
+    width: 34px;
+    height: 34px;
+    display: grid;
+    place-items: center;
+    border-radius: 9px;
+    background: var(--surface);
+    color: var(--primary);
+    font-size: 1rem;
+}
+
+.file-drop__text {
+    min-width: 0;
+    flex: 1;
+}
+
+.file-drop__label {
+    display: block;
+    color: var(--text);
+    font-size: .84rem;
+    font-weight: 700;
+}
+
+.file-drop__filename {
+    display: block;
+    margin-top: 2px;
+    overflow: hidden;
+    color: var(--muted);
+    font-size: .74rem;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.file-drop__clear {
+    position: relative;
+    z-index: 3;
+    flex: 0 0 auto;
+    width: 28px;
+    height: 28px;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    border: 0;
+    border-radius: 50%;
+    color: var(--muted);
+    background: var(--surface);
+    font-size: .85rem;
+    line-height: 1;
+}
+
+.file-drop__clear:hover {
+    color: var(--danger);
+    background: var(--danger-soft);
+}
+
+.file-drop.has-file .file-drop__clear {
+    display: flex;
+}
+
+.file-drop.has-file .file-drop__surface {
+    border-style: solid;
+    border-color: var(--success);
+    background: var(--success-soft);
+}
+
+.file-drop.has-file .file-drop__icon {
+    color: var(--success);
+}
+
+/* Button hierarchy: Cancel becomes a quiet text action, Save stays primary */
+.modal-actions .secondary-button[data-close-modal] {
+    min-height: 40px;
+    padding: 9px 14px;
+    border: 0;
+    color: var(--muted);
+    background: transparent;
+    font-weight: 700;
+}
+
+.modal-actions .secondary-button[data-close-modal]:hover {
+    color: var(--text);
+    background: var(--surface-soft);
+}
+
+.modal-actions {
+    justify-content: space-between;
+}
+
+/* Even out field-group rhythm inside the resource modal */
+#resourceForm .field-help {
+    margin-top: 8px;
+}
+
+#resourceForm label.field-label {
+    margin: 18px 0 8px;
+}
+
+#resourceForm label.field-label:first-of-type {
+    margin-top: 4px;
+}
 textarea.form-control {
     resize: vertical;
     line-height: 1.55;
@@ -2429,7 +2588,6 @@ textarea.form-control {
         padding: 18px;
     }
 }
-
 /* In-app resource viewer: PDF / image lightbox / text / audio */
 
 .viewer-toolbar {
@@ -2634,44 +2792,4 @@ textarea.form-control {
     .audio-player-wrap {
         padding: 28px 16px;
     }
-}
-/* Word document (.docx) viewer */
-.docx-viewer {
-    width: 100%;
-    height: 100%;
-    min-height: 420px;
-    overflow: auto;
-    -webkit-overflow-scrolling: touch;
-    padding: 28px clamp(16px, 4vw, 48px);
-    background: var(--surface);
-    color: var(--text);
-    line-height: 1.7;
-}
-
-.docx-viewer h1,
-.docx-viewer h2,
-.docx-viewer h3 {
-    margin: 1.3em 0 .5em;
-    line-height: 1.3;
-}
-
-.docx-viewer p {
-    margin: 0 0 1em;
-}
-
-.docx-viewer table {
-    width: 100%;
-    border-collapse: collapse;
-    margin: 1em 0;
-}
-
-.docx-viewer table td,
-.docx-viewer table th {
-    border: 1px solid var(--border);
-    padding: 8px 10px;
-}
-
-.docx-viewer img {
-    max-width: 100%;
-    height: auto;
 }
