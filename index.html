@@ -348,7 +348,10 @@
                                 <p class="eyebrow">Current resource</p>
                                 <h3 id="workspaceTitle">Study material</h3>
                             </div>
-                            <button class="secondary-button" id="closeWorkspace">Close resource</button>
+                            <div class="workspace-header-actions">
+                                <button class="primary-button" id="openTutorChat">💬 Ask Tutor</button>
+                                <button class="secondary-button" id="closeWorkspace">Close resource</button>
+                            </div>
                         </div>
                         <div class="workspace-viewer" id="workspaceViewer"></div>
                     </div>
@@ -874,6 +877,30 @@
                     aria-label="Close reflection">×</button>
             </div>
             <p class="saved-reflection" id="reflectionViewText"></p>
+        </div>
+    </div>
+
+    <!-- AI Tutor Chat -->
+    <div class="modal-backdrop hidden" id="tutorChatModal" role="dialog" aria-modal="true"
+        aria-labelledby="tutorChatTitle">
+        <div class="modal-card tutor-chat-card">
+            <div class="modal-header">
+                <div>
+                    <p class="eyebrow">AI academic companion</p>
+                    <h3 id="tutorChatTitle">Ask Tutor</h3>
+                    <p class="tutor-chat-resource-note" id="tutorChatResourceNote"></p>
+                </div>
+                <div class="modal-header-actions">
+                    <button class="icon-button" id="clearTutorChat" title="Start a new chat" aria-label="Clear chat">🗑</button>
+                    <button class="icon-button" data-close-modal="tutorChatModal" aria-label="Close tutor chat">×</button>
+                </div>
+            </div>
+            <div class="tutor-chat-messages" id="tutorChatMessages"></div>
+            <form id="tutorChatForm" class="tutor-chat-form">
+                <textarea id="tutorChatInput" class="form-control" rows="2" maxlength="1000"
+                    placeholder="Ask a question about this resource…" required></textarea>
+                <button class="primary-button" type="submit" id="tutorChatSend">Send</button>
+            </form>
         </div>
     </div>
 
