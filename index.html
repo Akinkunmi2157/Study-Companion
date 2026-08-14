@@ -12,12 +12,6 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap"
         rel="stylesheet" />
     <link rel="stylesheet" href="./index.css" />
-    <!-- Put this in index.html inside <head> -->
-    <script type="module">
-        import { GoogleGenAI, Type } from "https://esm.sh/@google/genai";
-        window.GoogleGenAI = GoogleGenAI;
-        window.Type = Type;
-    </script>
 </head>
 
 <body>
@@ -350,6 +344,7 @@
                             </div>
                             <div class="workspace-header-actions">
                                 <button class="primary-button" id="openTutorChat">💬 Ask Tutor</button>
+                                <button class="secondary-button" id="toggleWorkspaceFullscreen">⤢ Full screen</button>
                                 <button class="secondary-button" id="closeWorkspace">Close resource</button>
                             </div>
                         </div>
@@ -891,8 +886,10 @@
                     <p class="tutor-chat-resource-note" id="tutorChatResourceNote"></p>
                 </div>
                 <div class="modal-header-actions">
-                    <button class="icon-button" id="clearTutorChat" title="Start a new chat" aria-label="Clear chat">🗑</button>
-                    <button class="icon-button" data-close-modal="tutorChatModal" aria-label="Close tutor chat">×</button>
+                    <button class="icon-button" id="clearTutorChat" title="Start a new chat"
+                        aria-label="Clear chat">🗑</button>
+                    <button class="icon-button" data-close-modal="tutorChatModal"
+                        aria-label="Close tutor chat">×</button>
                 </div>
             </div>
             <div class="tutor-chat-messages" id="tutorChatMessages"></div>
