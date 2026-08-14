@@ -38,10 +38,10 @@
     // -------------------------------------------------------------
     // GEMINI SUPABASE EDGE FUNCTION INTEGRATION
     // -------------------------------------------------------------
-    async function askGemini(promptText) {
+    async function askGemini(promptText, extra = {}) {
         try {
             const { data, error } = await supabase.functions.invoke("gemini-chat", {
-                body: { prompt: promptText }
+                body: { prompt: promptText, ...extra }
             });
 
             console.log("GEMINI RAW RESPONSE >>>", JSON.stringify({ data, error }, null, 2));
@@ -102,6 +102,18 @@
         activeResourceId: null
     };
 
+    // In-memory AI tutor chat session. Not persisted — a fresh chat starts
+    // each time a resource is opened for tutoring, keyed to that resource's
+    // extracted study text so answers stay grounded in what the student is
+    // actually reading.
+    const tutorChat = {
+        resourceId: null,
+        resourceTitle: "",
+        context: "",
+        history: [], // [{ role: "user" | "assistant", text }]
+        sending: false
+    };
+
     const els = {
         authShell: document.getElementById("authShell"),
         appShell: document.getElementById("appShell"),
@@ -146,6 +158,15 @@
         workspaceViewer: document.getElementById("workspaceViewer"),
         closeWorkspace: document.getElementById("closeWorkspace"),
         toggleWorkspaceFullscreen: document.getElementById("toggleWorkspaceFullscreen"),
+        openTutorChat: document.getElementById("openTutorChat"),
+        tutorChatModal: document.getElementById("tutorChatModal"),
+        tutorChatTitle: document.getElementById("tutorChatTitle"),
+        tutorChatResourceNote: document.getElementById("tutorChatResourceNote"),
+        tutorChatMessages: document.getElementById("tutorChatMessages"),
+        tutorChatForm: document.getElementById("tutorChatForm"),
+        tutorChatInput: document.getElementById("tutorChatInput"),
+        tutorChatSend: document.getElementById("tutorChatSend"),
+        clearTutorChat: document.getElementById("clearTutorChat"),
 
         dashboardStreak: document.getElementById("dashboardStreak"),
         dashboardHours: document.getElementById("dashboardHours"),
@@ -1436,6 +1457,114 @@
         return metadata;
     }
 
+    // -------------------------------------------------------------
+    // AI TUTOR CHAT — ask questions about the resource being studied.
+    // Reuses extractResourceStudyText() for context and the same
+    // gemini-chat edge function as the reflection/assessment flow.
+    // -------------------------------------------------------------
+    async function openTutorChatFor(resourceId) {
+        const resource = getResource(resourceId);
+        if (!resource) return showToast("Open a resource first to chat with the tutor about it.", "error");
+
+        if (tutorChat.resourceId !== resource.id) {
+            tutorChat.resourceId = resource.id;
+            tutorChat.resourceTitle = resource.title;
+            tutorChat.history = [];
+            tutorChat.context = "";
+        }
+
+        els.tutorChatResourceNote.textContent = `About: ${resource.title}`;
+        openModal(els.tutorChatModal);
+        renderTutorMessages();
+        setTimeout(() => els.tutorChatInput.focus(), 100);
+
+        if (!tutorChat.context) {
+            els.tutorChatMessages.innerHTML = `<p class="tutor-chat-empty">Reading the resource…</p>`;
+            tutorChat.context = await extractResourceStudyText(resource);
+            renderTutorMessages();
+        }
+    }
+
+    function resetTutorChat() {
+        tutorChat.history = [];
+        renderTutorMessages();
+        els.tutorChatInput.value = "";
+        els.tutorChatInput.focus();
+    }
+
+    function renderTutorMessages() {
+        if (!tutorChat.history.length) {
+            els.tutorChatMessages.innerHTML = `<p class="tutor-chat-empty">Ask anything about "${escapeHtml(tutorChat.resourceTitle)}" — definitions, summaries, worked examples, anything unclear.</p>`;
+            return;
+        }
+
+        els.tutorChatMessages.innerHTML = tutorChat.history.map(msg => `
+            <div class="tutor-msg ${msg.role === "user" ? "user" : "assistant"}">${escapeHtml(msg.text)}</div>
+        `).join("");
+        els.tutorChatMessages.scrollTop = els.tutorChatMessages.scrollHeight;
+    }
+
+    function setTutorTyping(visible) {
+        const existing = els.tutorChatMessages.querySelector(".tutor-msg.typing");
+        if (!visible) {
+            if (existing) existing.remove();
+            return;
+        }
+        if (existing) return;
+        const bubble = document.createElement("div");
+        bubble.className = "tutor-msg typing";
+        bubble.innerHTML = "<span></span><span></span><span></span>";
+        els.tutorChatMessages.appendChild(bubble);
+        els.tutorChatMessages.scrollTop = els.tutorChatMessages.scrollHeight;
+    }
+
+    async function sendTutorChatMessage(event) {
+        event.preventDefault();
+        if (tutorChat.sending) return;
+
+        const question = els.tutorChatInput.value.trim();
+        if (!question) return;
+
+        const resource = getResource(tutorChat.resourceId);
+        if (!resource) return showToast("That resource is no longer available.", "error");
+
+        tutorChat.sending = true;
+        els.tutorChatSend.disabled = true;
+        els.tutorChatInput.value = "";
+        tutorChat.history.push({ role: "user", text: question });
+        renderTutorMessages();
+        setTutorTyping(true);
+
+        try {
+            const historyForApi = tutorChat.history
+                .slice(0, -1)
+                .map(msg => ({ role: msg.role, text: msg.text }));
+
+            const answer = await askGemini(question, {
+                resourceContext: tutorChat.context,
+                chatHistory: historyForApi
+            });
+
+            setTutorTyping(false);
+
+            if (!answer) {
+                tutorChat.history.push({ role: "assistant", text: "Sorry, I couldn't reach the tutor right now. Please try again." });
+            } else {
+                tutorChat.history.push({ role: "assistant", text: answer });
+            }
+            renderTutorMessages();
+        } catch (error) {
+            console.error("Tutor chat failed:", error);
+            setTutorTyping(false);
+            tutorChat.history.push({ role: "assistant", text: "Something went wrong answering that. Please try again." });
+            renderTutorMessages();
+        } finally {
+            tutorChat.sending = false;
+            els.tutorChatSend.disabled = false;
+            els.tutorChatInput.focus();
+        }
+    }
+
     function normaliseAssessment(payload) {
         const objective = Array.isArray(payload?.objectiveQuestions) ? payload.objectiveQuestions : [];
         const theory = Array.isArray(payload?.theoryQuestions) ? payload.theoryQuestions : [];
@@ -2628,6 +2757,15 @@ Rules:
         els.resourceTypeFilter.addEventListener("change", renderResources);
         els.closeWorkspace.addEventListener("click", closeStudyWorkspace);
         if (els.toggleWorkspaceFullscreen) els.toggleWorkspaceFullscreen.addEventListener("click", toggleWorkspaceFullscreen);
+        els.openTutorChat.addEventListener("click", () => openTutorChatFor(timer.activeResourceId));
+        els.tutorChatForm.addEventListener("submit", sendTutorChatMessage);
+        els.clearTutorChat.addEventListener("click", resetTutorChat);
+        els.tutorChatInput.addEventListener("keydown", event => {
+            if (event.key === "Enter" && !event.shiftKey) {
+                event.preventDefault();
+                els.tutorChatForm.requestSubmit();
+            }
+        });
         els.profileForm.addEventListener("submit", saveProfile);
         [els.profilePhotoButton, els.changeProfilePhoto].forEach(button => button.addEventListener("click", () => els.profilePhotoInput.click()));
         els.profilePhotoInput.addEventListener("change", uploadProfilePhoto);
