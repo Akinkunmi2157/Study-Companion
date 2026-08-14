@@ -38,25 +38,78 @@
     // -------------------------------------------------------------
     // GEMINI SUPABASE EDGE FUNCTION INTEGRATION
     // -------------------------------------------------------------
+    const AI_TIMEOUT_MS = 45000;
+
+    function extractAiText(data) {
+        if (!data) return "";
+        if (typeof data === "string") return data.trim();
+
+        const direct = data.text || data.answer || data.response || data.output;
+        if (typeof direct === "string") return direct.trim();
+
+        const candidateText = data?.candidates?.[0]?.content?.parts
+            ?.map(part => part?.text || "")
+            .join("")
+            .trim();
+
+        return candidateText || "";
+    }
+
+    async function invokeGeminiOnce(promptText, extra = {}) {
+        const invokePromise = supabase.functions.invoke("gemini-chat", {
+            body: { prompt: promptText, ...extra }
+        });
+
+        const timeoutPromise = new Promise((_, reject) => {
+            setTimeout(() => reject(new Error("AI request timed out. Please try again.")), AI_TIMEOUT_MS);
+        });
+
+        return Promise.race([invokePromise, timeoutPromise]);
+    }
+
     async function askGemini(promptText, extra = {}) {
+        const prompt = String(promptText || "").trim();
+        if (!prompt) throw new Error("The AI request was empty.");
+
         try {
-            const { data, error } = await supabase.functions.invoke("gemini-chat", {
-                body: { prompt: promptText, ...extra }
-            });
+            let { data, error } = await invokeGeminiOnce(prompt, extra);
 
-            console.log("GEMINI RAW RESPONSE >>>", JSON.stringify({ data, error }, null, 2));
-
+            // A stale/expired user session is a common reason an authenticated
+            // Edge Function returns 401. Refresh once, then retry.
             if (error) {
-                console.error("Gemini Edge Function Error:", error);
-                showToast("Failed to reach Gemini AI.", "error");
-                return null;
+                const status = Number(error?.context?.status || error?.status || 0);
+                if (status === 401 || status === 403) {
+                    await supabase.auth.refreshSession();
+                    ({ data, error } = await invokeGeminiOnce(prompt, extra));
+                }
             }
 
-            return data?.text || null;
+            if (error) {
+                let detail = "";
+                try {
+                    const context = error.context;
+                    if (context && typeof context.json === "function") {
+                        const body = await context.json();
+                        detail = body?.error || body?.message || "";
+                    }
+                } catch (_) {
+                    // Ignore body parsing failure and use the generic message.
+                }
+
+                console.error("Gemini Edge Function Error:", error);
+                throw new Error(detail || error.message || "The AI service could not be reached.");
+            }
+
+            const text = extractAiText(data);
+            if (!text) {
+                console.error("Unexpected Gemini response:", data);
+                throw new Error("The AI service returned an empty response.");
+            }
+
+            return text;
         } catch (err) {
-            console.error("Failed to invoke edge function:", err);
-            showToast("Error connecting to Gemini backend.", "error");
-            return null;
+            console.error("Failed to invoke Gemini Edge Function:", err);
+            throw err instanceof Error ? err : new Error("Error connecting to the AI service.");
         }
     }
 
@@ -1414,7 +1467,30 @@
     }
 
     function stripCodeFence(value = "") {
-        return value.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
+        return String(value || "")
+            .trim()
+            .replace(/^```(?:json)?\s*/i, "")
+            .replace(/\s*```$/, "")
+            .trim();
+    }
+
+    function parseJsonObjectFromAi(value) {
+        const cleaned = stripCodeFence(value);
+        try {
+            return JSON.parse(cleaned);
+        } catch (_) {
+            const firstBrace = cleaned.indexOf("{");
+            const lastBrace = cleaned.lastIndexOf("}");
+            if (firstBrace === -1 || lastBrace <= firstBrace) {
+                throw new Error("The AI returned an invalid assessment response. Please try again.");
+            }
+            try {
+                return JSON.parse(cleaned.slice(firstBrace, lastBrace + 1));
+            } catch (error) {
+                console.error("Assessment JSON parse failed:", cleaned, error);
+                throw new Error("The AI returned malformed assessment data. Please try again.");
+            }
+        }
     }
 
     async function extractResourceStudyText(resource) {
@@ -1540,23 +1616,28 @@
                 .slice(0, -1)
                 .map(msg => ({ role: msg.role, text: msg.text }));
 
+            if (!tutorChat.context || tutorChat.context.trim().length < 20) {
+                throw new Error("There is not enough readable content in this resource for the tutor yet.");
+            }
+
             const answer = await askGemini(question, {
-                resourceContext: tutorChat.context,
-                chatHistory: historyForApi
+                mode: "tutor",
+                resourceTitle: tutorChat.resourceTitle,
+                resourceContext: tutorChat.context.slice(0, 60000),
+                chatHistory: historyForApi.slice(-12)
             });
 
             setTutorTyping(false);
 
-            if (!answer) {
-                tutorChat.history.push({ role: "assistant", text: "Sorry, I couldn't reach the tutor right now. Please try again." });
-            } else {
-                tutorChat.history.push({ role: "assistant", text: answer });
-            }
+            tutorChat.history.push({ role: "assistant", text: answer });
             renderTutorMessages();
         } catch (error) {
             console.error("Tutor chat failed:", error);
             setTutorTyping(false);
-            tutorChat.history.push({ role: "assistant", text: "Something went wrong answering that. Please try again." });
+            tutorChat.history.push({
+                role: "assistant",
+                text: error?.message || "The tutor is temporarily unavailable. Please try again."
+            });
             renderTutorMessages();
         } finally {
             tutorChat.sending = false;
@@ -1620,9 +1701,9 @@ Rules:
 - Every question and answer must be directly supported by the supplied resource.
 - Do not introduce outside facts.`;
 
-        const response = await askGemini(prompt);
+        const response = await askGemini(prompt, { mode: "assessment" });
         if (!response) throw new Error("The resource check could not be completed.");
-        const assessment = normaliseAssessment(JSON.parse(stripCodeFence(response)));
+        const assessment = normaliseAssessment(parseJsonObjectFromAi(response));
         if (assessment.objectiveQuestions.length !== 10 || assessment.objectiveQuestions.some(q => q.options.length !== 4) || assessment.theoryQuestions.length !== 2) {
             throw new Error("The generated assessment was incomplete. Please try again.");
         }
