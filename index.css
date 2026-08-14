@@ -730,6 +730,7 @@ button:disabled {
     border-color: var(--primary);
     box-shadow: 0 0 0 4px var(--primary-soft);
 }
+
 /* ============================================================
    Resource modal — custom file input, select chevron, button hierarchy
    Add this block to index.css (anywhere after the base .form-control rules)
@@ -890,6 +891,7 @@ body.dark select.form-control {
 #resourceForm label.field-label:first-of-type {
     margin-top: 4px;
 }
+
 textarea.form-control {
     resize: vertical;
     line-height: 1.55;
@@ -2733,6 +2735,7 @@ textarea.form-control {
         padding: 18px;
     }
 }
+
 /* In-app resource viewer: PDF / image lightbox / text / audio */
 
 .viewer-toolbar {
