@@ -1,4 +1,3 @@
-
 /
 index.ts
 
@@ -21,7 +20,7 @@ serve(async (req) => {
     }
 
     try {
-        const { question, prompt, userCourses, chatHistory } = await req.json();
+        const { question, prompt, userCourses, chatHistory, resourceContext } = await req.json();
         const userQuestion = String(prompt || question || "").trim();
         if (!userQuestion) {
             return new Response(JSON.stringify({ error: "A question or prompt is required." }), {
@@ -35,16 +34,25 @@ serve(async (req) => {
             ? userCourses.map((c: any) => `- ${c.title} (${c.code || 'N/A'}): ${c.description || 'No description'}`).join("\n")
             : "No specific courses registered yet.";
 
+        // 2. If a resource is being studied (Ask Tutor flow), ground the
+        // conversation in its extracted text so answers stay tied to what
+        // the student is actually reading rather than drifting off-topic.
+        const trimmedResourceContext = String(resourceContext || "").trim();
+        const resourceSection = trimmedResourceContext
+            ? `\nThe student currently has the following study resource open. Prioritize this content when answering — quote or paraphrase from it where relevant, and prefer it over general knowledge when the two could conflict:\n"""\n${trimmedResourceContext.slice(0, 60000)}\n"""\n`
+            : "";
+
         const systemInstruction = `
 You are an AI Academic Companion integrated into the Digital Study Companion app.
-Your job is to clarify concepts and answer questions strictly tailored to the user's registered courses.
+Your job is to clarify concepts and answer questions strictly tailored to the user's registered courses${trimmedResourceContext ? " and the resource they are currently studying" : ""}.
 
 User's Enrolled Courses:
 ${courseContext}
-
+${resourceSection}
 Guidelines:
 - Give clear, concise, and simple explanations suitable for a university student.
 - Use bullet points or code snippets where necessary for clarity.
+${trimmedResourceContext ? "- If the question can be answered from the resource above, ground your answer in it. If it asks about something outside the resource, answer helpfully anyway but note it's beyond the current material." : ""}
 `;
 
         // 2. Build conversation contents for Gemini
