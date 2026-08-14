@@ -39,6 +39,7 @@
     // GEMINI SUPABASE EDGE FUNCTION INTEGRATION
     // -------------------------------------------------------------
     const AI_TIMEOUT_MS = 45000;
+
     function extractAiText(data) {
         if (!data) return "";
         if (typeof data === "string") return data.trim();
@@ -54,19 +55,50 @@
         return candidateText || "";
     }
 
+    async function invokeGeminiOnce(promptText, extra = {}) {
+        const invokePromise = supabase.functions.invoke("gemini-chat", {
+            body: { prompt: promptText, ...extra }
+        });
+
+        const timeoutPromise = new Promise((_, reject) => {
+            setTimeout(() => reject(new Error("AI request timed out. Please try again.")), AI_TIMEOUT_MS);
+        });
+
+        return Promise.race([invokePromise, timeoutPromise]);
+    }
+
     async function askGemini(promptText, extra = {}) {
         const prompt = String(promptText || "").trim();
         if (!prompt) throw new Error("The AI request was empty.");
 
         try {
             let { data, error } = await invokeGeminiOnce(prompt, extra);
-            // ... existing 401/403 retry logic unchanged ...
 
             if (error) {
-                // ... existing error-context parsing unchanged ...
+                const status = Number(error?.context?.status || error?.status || 0);
+                if (status === 401 || status === 403) {
+                    await supabase.auth.refreshSession();
+                    ({ data, error } = await invokeGeminiOnce(prompt, extra));
+                }
             }
 
-            // NEW: surface an error the function itself reported in a 200 response
+            if (error) {
+                let detail = "";
+                try {
+                    const context = error.context;
+                    if (context && typeof context.json === "function") {
+                        const body = await context.json();
+                        detail = body?.error || body?.message || "";
+                    }
+                } catch (_) {
+                    // Ignore body parsing failure and use the generic message.
+                }
+
+                console.error("Gemini Edge Function Error:", error);
+                throw new Error(detail || error.message || "The AI service could not be reached.");
+            }
+
+            // Surface an error the function itself reported in a 200 response
             if (data && typeof data === "object" && data.error) {
                 console.error("Gemini Edge Function returned an error payload:", data.error);
                 throw new Error(typeof data.error === "string" ? data.error : "The AI service reported an error.");
