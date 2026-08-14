@@ -115,8 +115,7 @@
             console.error("Failed to invoke Gemini Edge Function:", err);
             throw err instanceof Error ? err : new Error("Error connecting to the AI service.");
         }
-    }
-
+    } 
     const defaultState = {
         tasks: [],
         sessions: [],
@@ -731,6 +730,20 @@
             .replaceAll(">", "&gt;")
             .replaceAll('"', "&quot;")
             .replaceAll("'", "&#039;");
+    }
+
+    // Strips common Markdown syntax Gemini sometimes adds (bold, italics,
+    // headers, bullet markers, inline code) so AI replies render as clean
+    // plain text instead of showing raw ** and # characters in the chat
+    // bubble. Only applied to assistant messages — the student's own
+    // typed messages are left untouched.
+    function stripMarkdown(text = "") {
+        return String(text)
+            .replace(/\*\*(.*?)\*\*/g, "$1")   // **bold**
+            .replace(/\*(.*?)\*/g, "$1")       // *italic*
+            .replace(/^#{1,6}\s+/gm, "")       // # headers
+            .replace(/^[-*]\s+/gm, "• ")       // - bullets -> •
+            .replace(/`([^`]+)`/g, "$1");      // `inline code`
     }
 
     function showToast(message, type = "success") {
@@ -1579,7 +1592,7 @@
         }
 
         els.tutorChatMessages.innerHTML = tutorChat.history.map(msg => `
-            <div class="tutor-msg ${msg.role === "user" ? "user" : "assistant"}">${escapeHtml(msg.text)}</div>
+            <div class="tutor-msg ${msg.role === "user" ? "user" : "assistant"}">${escapeHtml(msg.role === "assistant" ? stripMarkdown(msg.text) : msg.text)}</div>
         `).join("");
         els.tutorChatMessages.scrollTop = els.tutorChatMessages.scrollHeight;
     }
