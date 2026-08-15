@@ -732,18 +732,78 @@
             .replaceAll("'", "&#039;");
     }
 
-    // Strips common Markdown syntax Gemini sometimes adds (bold, italics,
-    // headers, bullet markers, inline code) so AI replies render as clean
-    // plain text instead of showing raw ** and # characters in the chat
-    // bubble. Only applied to assistant messages — the student's own
-    // typed messages are left untouched.
-    function stripMarkdown(text = "") {
-        return String(text)
-            .replace(/\*\*(.*?)\*\*/g, "$1")   // **bold**
-            .replace(/\*(.*?)\*/g, "$1")       // *italic*
-            .replace(/^#{1,6}\s+/gm, "")       // # headers
-            .replace(/^[-*]\s+/gm, "• ")       // - bullets -> •
-            .replace(/`([^`]+)`/g, "$1");      // `inline code`
+    // Renders common Markdown syntax Gemini replies use (bold, italics,
+    // headers, bullet/numbered lists, blockquotes, inline code, line
+    // breaks) into safe, real HTML — so AI replies show as properly
+    // formatted text/lists instead of raw **, #, -, and > characters in
+    // the chat bubble. Only applied to assistant messages — the
+    // student's own typed messages are left as escaped plain text.
+    //
+    // The input is HTML-escaped FIRST, then a small set of Markdown
+    // patterns are converted to HTML tags on the already-escaped text —
+    // so this never introduces unescaped user/AI content into the DOM.
+    function renderMarkdown(text = "") {
+        const escaped = escapeHtml(String(text));
+        const lines = escaped.split("\n");
+        const htmlBlocks = [];
+        let listBuffer = [];
+        let listType = null; // "ul" | "ol"
+
+        function flushList() {
+            if (!listBuffer.length) return;
+            const items = listBuffer.map(item => `<li>${item}</li>`).join("");
+            htmlBlocks.push(`<${listType}>${items}</${listType}>`);
+            listBuffer = [];
+            listType = null;
+        }
+
+        function inline(str) {
+            return str
+                .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")   // **bold**
+                .replace(/(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)/g, "<em>$1</em>") // *italic*
+                .replace(/`([^`]+)`/g, "<code>$1</code>");          // `inline code`
+        }
+
+        for (const rawLine of lines) {
+            const line = rawLine.trim();
+
+            if (!line) { flushList(); continue; }
+
+            const headerMatch = line.match(/^(#{1,6})\s+(.*)$/);
+            if (headerMatch) {
+                flushList();
+                const level = Math.min(headerMatch[1].length + 2, 6); // keep headers modest inside a chat bubble
+                htmlBlocks.push(`<h${level}>${inline(headerMatch[2])}</h${level}>`);
+                continue;
+            }
+
+            const quoteMatch = line.match(/^&gt;\s?(.*)$/);
+            if (quoteMatch) {
+                flushList();
+                htmlBlocks.push(`<blockquote>${inline(quoteMatch[1])}</blockquote>`);
+                continue;
+            }
+
+            const bulletMatch = line.match(/^[-*]\s+(.*)$/);
+            if (bulletMatch) {
+                if (listType !== "ul") { flushList(); listType = "ul"; }
+                listBuffer.push(inline(bulletMatch[1]));
+                continue;
+            }
+
+            const numberedMatch = line.match(/^\d+[.)]\s+(.*)$/);
+            if (numberedMatch) {
+                if (listType !== "ol") { flushList(); listType = "ol"; }
+                listBuffer.push(inline(numberedMatch[1]));
+                continue;
+            }
+
+            flushList();
+            htmlBlocks.push(`<p>${inline(line)}</p>`);
+        }
+        flushList();
+
+        return htmlBlocks.join("");
     }
 
     function showToast(message, type = "success") {
@@ -1481,6 +1541,12 @@
                 return `${metadata}\n\n${pages.join("\n")}`.slice(0, 60000);
             }
 
+            if (isDocxResource(resource) && window.mammoth) {
+                const arrayBuffer = await file.arrayBuffer();
+                const result = await window.mammoth.extractRawText({ arrayBuffer });
+                return `${metadata}\n\n${result.value}`.slice(0, 60000);
+            }
+
             if (
                 resource.mimeType.startsWith("text/") ||
                 /\.(txt|md|csv|json|html?|js|ts|css|py|java|c|cpp|sql)$/i.test(resource.fileName || "")
@@ -1536,7 +1602,7 @@
         }
 
         els.tutorChatMessages.innerHTML = tutorChat.history.map(msg => `
-            <div class="tutor-msg ${msg.role === "user" ? "user" : "assistant"}">${escapeHtml(msg.role === "assistant" ? stripMarkdown(msg.text) : msg.text)}</div>
+            <div class="tutor-msg ${msg.role === "user" ? "user" : "assistant"}">${msg.role === "assistant" ? renderMarkdown(msg.text) : escapeHtml(msg.text)}</div>
         `).join("");
         els.tutorChatMessages.scrollTop = els.tutorChatMessages.scrollHeight;
     }
@@ -2156,6 +2222,8 @@ Rules for the assessment questions (these test comprehension of the material its
         if (type.startsWith("audio/")) return { icon: "🎧", label: "Audio selected" };
         if (type.startsWith("image/")) return { icon: "🖼️", label: "Image selected" };
         if (type === "application/pdf") return { icon: "📄", label: "PDF selected" };
+        if (type === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" || /\.docx$/i.test(file.name || ""))
+            return { icon: "📝", label: "Word document selected" };
         return { icon: "📄", label: "File selected" };
     }
 
@@ -2319,6 +2387,14 @@ Rules for the assessment questions (these test comprehension of the material its
         );
     }
 
+    // .docx only (mammoth.js does not support legacy binary .doc).
+    function isDocxResource(resource) {
+        return (
+            resource.mimeType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
+            /\.docx$/i.test(resource.fileName || "")
+        );
+    }
+
     function teardownResourceViewer() {
         if (typeof activeViewerCleanup === "function") {
             try { activeViewerCleanup(); } catch (error) { console.warn("Viewer cleanup failed.", error); }
@@ -2368,6 +2444,8 @@ Rules for the assessment questions (these test comprehension of the material its
                 renderVideoViewer(resource, currentBlobUrl);
             } else if (resource.mimeType.startsWith("audio/")) {
                 renderAudioViewer(resource, currentBlobUrl);
+            } else if (isDocxResource(resource)) {
+                await renderDocxViewer(resource, file);
             } else if (isTextLikeResource(resource)) {
                 await renderTextViewer(resource, file);
             } else {
@@ -2519,6 +2597,23 @@ Rules for the assessment questions (these test comprehension of the material its
     async function renderTextViewer(resource, file) {
         const text = await file.text();
         els.workspaceViewer.innerHTML = `<pre class="text-viewer">${escapeHtml(text)}</pre>`;
+    }
+
+    // Word documents (.docx): converted client-side to HTML with mammoth.js
+    // and rendered directly in the page — same "never hand off to an
+    // external app" principle as the PDF/video/image viewers above.
+    // Requires mammoth.browser.min.js to be loaded on the page (see
+    // index.html — add:
+    //   <script src="https://cdn.jsdelivr.net/npm/mammoth@1.8.0/mammoth.browser.min.js"></script>
+    // mammoth only supports the modern .docx format, not legacy .doc.
+    async function renderDocxViewer(resource, file) {
+        if (!window.mammoth) {
+            renderUnsupportedViewer(resource, currentBlobUrl, true);
+            return;
+        }
+        const arrayBuffer = await file.arrayBuffer();
+        const result = await window.mammoth.convertToHtml({ arrayBuffer });
+        els.workspaceViewer.innerHTML = `<div class="docx-viewer">${result.value}</div>`;
     }
 
     // Unsupported file types never redirect automatically. The student
