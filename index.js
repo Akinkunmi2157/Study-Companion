@@ -115,7 +115,7 @@
             console.error("Failed to invoke Gemini Edge Function:", err);
             throw err instanceof Error ? err : new Error("Error connecting to the AI service.");
         }
-    } 
+    }
     const defaultState = {
         tasks: [],
         sessions: [],
@@ -1358,57 +1358,13 @@
         }
     }
 
-    const REFLECTION_STOPWORDS = new Set([
-        "about", "above", "after", "again", "against", "all", "and", "any", "are", "because",
-        "been", "before", "being", "below", "between", "both", "but", "cant", "could", "did",
-        "does", "doing", "down", "during", "each", "few", "for", "from", "further", "had",
-        "has", "have", "having", "here", "hers", "herself", "him", "himself", "his", "how",
-        "into", "its", "itself", "just", "learned", "learn", "learnt", "lesson", "more",
-        "most", "myself", "not", "notes", "note", "now", "off", "once", "only", "other",
-        "ours", "ourselves", "out", "over", "own", "same", "should", "some", "still", "study",
-        "studied", "studying", "such", "than", "that", "the", "their", "theirs", "them",
-        "themselves", "then", "there", "these", "they", "this", "those", "through", "today",
-        "topic", "under", "until", "very", "was", "watched", "were", "what", "when", "where",
-        "which", "while", "who", "whom", "why", "will", "with", "would", "your", "yours",
-        "yourself", "session", "resource", "video", "document", "material", "materials"
-    ]);
-
-    function extractKeywords(text) {
-        return new Set(
-            (text || "")
-                .toLowerCase()
-                .replace(/[_\-.]/g, " ")
-                .replace(/[^a-z0-9\s]/g, " ")
-                .split(/\s+/)
-                .filter(word => word.length >= 4 && !REFLECTION_STOPWORDS.has(word))
-        );
-    }
-
-    function buildResourceKeywords(resource) {
-        if (!resource) return new Set();
-        const fileBase = (resource.fileName || "").replace(/\.[^.]+$/, "");
-        return extractKeywords(`${resource.title || ""} ${resource.notes || ""} ${fileBase}`);
-    }
-
-    function checkResourceAlignment(value, resourceKeywords) {
-        if (!resourceKeywords || resourceKeywords.size < 2) {
-            return { applicable: false, ok: true };
-        }
-        const reflectionWords = extractKeywords(value);
-        const matches = [...resourceKeywords].filter(word =>
-            [...reflectionWords].some(rw => rw.includes(word) || word.includes(rw))
-        );
-        return { applicable: true, ok: matches.length >= 1, matches };
-    }
-
     function prepareReflectionModal() {
         const task = state.tasks.find(item => item.id === timer.pendingCompletion?.taskId);
         const resourceId = task?.resourceId || timer.pendingCompletion?.resourceId;
         const resource = resourceId ? getResource(resourceId) : null;
-        timer.reflectionResourceKeywords = buildResourceKeywords(resource);
 
         els.reflectionResourceNote.textContent = resource
-            ? `This session was logged against "${resource.title}". Mention something specific you studied from it.`
+            ? `This session was logged against "${resource.title}". Summarise what you understood about this topic, in your own words — you don't need to use the same wording as the resource.`
             : "";
         els.reflectionResourceNote.classList.toggle("hidden", !resource);
 
@@ -1454,33 +1410,21 @@
         const notRepetitive = words.length === 0 ||
             Math.max(...Object.values(wordCounts)) / words.length <= 0.4;
 
+        // Basic writing-quality checks only (length, vocabulary variety,
+        // word count, not overly repetitive). Whether the content actually
+        // reflects understanding of the resource's topic is judged by the
+        // AI in saveReflection() -> verifySummaryAndGenerateAssessment(),
+        // which evaluates conceptual understanding rather than requiring
+        // literal keyword overlap with the resource text.
         const basicsValid = hasEnoughLength && hasVariety && hasWords && notRepetitive;
 
-        const alignment = basicsValid
-            ? checkResourceAlignment(value, timer.reflectionResourceKeywords)
-            : { applicable: false, ok: true };
-
-        const valid = basicsValid && alignment.ok;
-
-        els.saveReflection.disabled = !valid;
+        els.saveReflection.disabled = !basicsValid;
         els.reflectionValidation.textContent = basicsValid
             ? ""
             : "Write at least 40 characters using seven or more varied, meaningful words.";
 
-        if (!basicsValid) {
-            els.reflectionAlignment.className = "alignment-status";
-            els.reflectionAlignment.textContent = "";
-        } else if (alignment.applicable && !alignment.ok) {
-            els.reflectionAlignment.className = "alignment-status visible mismatch";
-            els.reflectionAlignment.textContent =
-                "This doesn't seem to reference the linked resource yet. Mention a specific detail, term, or idea from what you studied to log the session.";
-        } else if (alignment.applicable && alignment.ok) {
-            els.reflectionAlignment.className = "alignment-status visible match";
-            els.reflectionAlignment.textContent = "Looks like it connects to the resource you studied. ✓";
-        } else {
-            els.reflectionAlignment.className = "alignment-status";
-            els.reflectionAlignment.textContent = "";
-        }
+        els.reflectionAlignment.className = "alignment-status";
+        els.reflectionAlignment.textContent = "";
     }
 
     function stripCodeFence(value = "") {
@@ -1587,7 +1531,7 @@
 
     function renderTutorMessages() {
         if (!tutorChat.history.length) {
-            els.tutorChatMessages.innerHTML = `<p class="tutor-chat-empty">Ask anything about "${escapeHtml(tutorChat.resourceTitle)}" — definitions, summaries, worked examples, anything unclear.</p>`;
+            els.tutorChatMessages.innerHTML = `<p class="tutor-chat-empty">Ask anything about "${escapeHtml(tutorChat.resourceTitle)}" — definitions, summaries, worked examples, or anything else. I can also help beyond this resource if you ask.</p>`;
             return;
         }
 
@@ -1609,6 +1553,17 @@
         bubble.innerHTML = "<span></span><span></span><span></span>";
         els.tutorChatMessages.appendChild(bubble);
         els.tutorChatMessages.scrollTop = els.tutorChatMessages.scrollHeight;
+    }
+
+    // Heuristic used only to tell the edge function whether THIS message
+    // explicitly asks the tutor to use the uploaded resource (e.g. "based
+    // on this resource...", "according to the document...", "in this
+    // pdf..."). This does not change the model's behaviour by itself —
+    // see the note in sendTutorChatMessage() below.
+    const RESOURCE_REFERENCE_PATTERN = /\b(this|the)\s+(resource|document|pdf|file|reading|material|text|article|chapter|notes?)\b|based on (this|the) (resource|document|pdf|file|reading|material)|according to (this|the) (resource|document|pdf|file|reading|material)/i;
+
+    function messageReferencesResource(question) {
+        return RESOURCE_REFERENCE_PATTERN.test(question);
     }
 
     async function sendTutorChatMessage(event) {
@@ -1633,14 +1588,21 @@
                 .slice(0, -1)
                 .map(msg => ({ role: msg.role, text: msg.text }));
 
-            if (!tutorChat.context || tutorChat.context.trim().length < 20) {
-                throw new Error("There is not enough readable content in this resource for the tutor yet.");
-            }
+            const useResourceContext = tutorChat.context && tutorChat.context.trim().length >= 20;
 
+            // `groundingMode` / `useResourceExplicitly` are hints for the
+            // gemini-chat edge function: by default the tutor should answer
+            // as a normal knowledgeable tutor (general subject knowledge is
+            // fine), and only lean on resourceContext when the student's
+            // question actually references the resource/document. The
+            // edge function still receives the full resourceContext either
+            // way in case it wants it for background, but these flags tell
+            // it which mode to use.
             const answer = await askGemini(question, {
                 mode: "tutor",
                 resourceTitle: tutorChat.resourceTitle,
-                resourceContext: tutorChat.context.slice(0, 60000),
+                resourceContext: useResourceContext ? tutorChat.context.slice(0, 60000) : "",
+                groundingMode: messageReferencesResource(question) ? "resource" : "general",
                 chatHistory: historyForApi.slice(-12)
             });
 
@@ -1689,10 +1651,10 @@
             throw new Error("There is not enough readable resource content to verify the summary. Add detailed resource notes or upload a readable PDF/text file.");
         }
 
-        const prompt = `You are verifying a student's study summary against the exact resource they studied.
+        const prompt = `You are assessing whether a student's study summary demonstrates genuine understanding of the subject matter they studied. The resource below tells you what topic/course area they were studying — use it as context for the subject, not as a script the student must repeat.
 
 RESOURCE TITLE: ${resource?.title || task?.title || "Study resource"}
-RESOURCE CONTENT:\n${resourceText}
+RESOURCE CONTENT (context on the topic being studied):\n${resourceText}
 
 STUDENT SUMMARY:\n${summary}
 
@@ -1709,14 +1671,17 @@ Return ONLY valid JSON with this exact structure:
   ]
 }
 
-Rules:
-- aligned must be true only when the summary contains accurate, meaningful ideas supported by the resource, not merely matching its title.
-- alignmentScore is 0-100. Require at least 60 for aligned=true.
-- Generate exactly 10 objective multiple-choice questions with exactly 4 options each.
+Rules for judging "aligned" (this is the important part):
+- Judge whether the summary shows real understanding of the general topic/subject area the resource covers — NOT whether it uses the same words, phrases, examples, or structure as the resource.
+- The student may explain the topic using their own words, their own examples, or broader/related knowledge that goes beyond what's in the resource, and should still be marked aligned if that understanding is accurate and relevant to the subject.
+- Only mark aligned=false if the summary is off-topic, contains meaningful factual errors about the subject, or is too vague/generic to show any real understanding (e.g. "I studied it and it was interesting").
+- Do NOT penalise the student for omitting specific terms, facts, or phrasing that happen to appear in the resource but weren't essential to demonstrating understanding.
+- alignmentScore (0-100) should reflect depth of topical understanding, not textual similarity to the resource. Require at least 60 for aligned=true.
+
+Rules for the assessment questions (these test comprehension of the material itself, separately from the alignment judgment above):
+- Generate exactly 10 objective multiple-choice questions with exactly 4 options each, drawn from the resource content.
 - correctAnswer must be the zero-based index of the correct option.
-- Generate exactly 2 theory questions and concise model answers.
-- Every question and answer must be directly supported by the supplied resource.
-- Do not introduce outside facts.`;
+- Generate exactly 2 theory questions with concise model answers, drawn from the resource content.`;
 
         const response = await askGemini(prompt, { mode: "assessment" });
         if (!response) throw new Error("The resource check could not be completed.");
@@ -1764,7 +1729,7 @@ Rules:
         els.saveReflection.disabled = true;
         els.saveReflection.textContent = "Checking summary…";
         els.reflectionAlignment.className = "alignment-status visible";
-        els.reflectionAlignment.textContent = "Comparing your summary with the resource and preparing your assessment…";
+        els.reflectionAlignment.textContent = "Checking your understanding of the topic and preparing your assessment…";
 
         try {
             const assessment = await verifySummaryAndGenerateAssessment(summary, resource, task);
@@ -1934,7 +1899,6 @@ Rules:
         closeModal(els.assessmentModal);
         timer.pendingCompletion = null;
         timer.pendingAssessment = null;
-        timer.reflectionResourceKeywords = null;
 
         // Show the review-your-answers screen (with explanations) before
         // advancing the timer, instead of jumping straight to the next
@@ -1962,7 +1926,6 @@ Rules:
         if (!window.confirm("Discard this completed session without logging it?")) return;
         timer.pendingCompletion = null;
         timer.pendingAssessment = null;
-        timer.reflectionResourceKeywords = null;
         closeModal(els.reflectionModal);
 
         const nextMode =
