@@ -742,8 +742,45 @@
     // The input is HTML-escaped FIRST, then a small set of Markdown
     // patterns are converted to HTML tags on the already-escaped text —
     // so this never introduces unescaped user/AI content into the DOM.
+    // Renders a single LaTeX expression via KaTeX (must be loaded on the
+    // page — see index.html). Never throws: if KaTeX isn't loaded or the
+    // expression is malformed, falls back to showing the original
+    // "$$...$$"/"$...$" text escaped, so the AI's answer still displays
+    // instead of breaking the whole message.
+    function renderKatex(expr, displayMode) {
+        const fallback = () => escapeHtml(displayMode ? `$$${expr}$$` : `$${expr}$`);
+        if (!window.katex) return fallback();
+        try {
+            return window.katex.renderToString(expr.trim(), { throwOnError: false, displayMode });
+        } catch (error) {
+            console.warn("KaTeX render failed.", error);
+            return fallback();
+        }
+    }
+
     function renderMarkdown(text = "") {
-        const escaped = escapeHtml(String(text));
+        let source = String(text);
+
+        // LaTeX math is extracted and rendered BEFORE HTML-escaping (KaTeX
+        // needs the raw backslashes/braces) and swapped back in as safe,
+        // already-rendered HTML AFTER the rest of the markdown pipeline
+        // runs — so a "$$...$$" block never gets mangled by list/paragraph
+        // parsing, and normal text never has LaTeX syntax leak into it.
+        // Placeholder tokens use a private-use Unicode char so they can't
+        // collide with real message content.
+        const mathBlocks = [];
+        const mathInline = [];
+
+        source = source.replace(/\$\$([\s\S]+?)\$\$/g, (_match, expr) => {
+            mathBlocks.push(renderKatex(expr, true));
+            return `\uE000B${mathBlocks.length - 1}\uE000`;
+        });
+        source = source.replace(/\$([^\$\n]+?)\$/g, (_match, expr) => {
+            mathInline.push(renderKatex(expr, false));
+            return `\uE000I${mathInline.length - 1}\uE000`;
+        });
+
+        const escaped = escapeHtml(source);
         const lines = escaped.split("\n");
         const htmlBlocks = [];
         let listBuffer = [];
@@ -822,7 +859,10 @@
         }
         flushList();
 
-        return htmlBlocks.join("");
+        let result = htmlBlocks.join("");
+        result = result.replace(/\uE000B(\d+)\uE000/g, (_match, i) => mathBlocks[Number(i)]);
+        result = result.replace(/\uE000I(\d+)\uE000/g, (_match, i) => mathInline[Number(i)]);
+        return result;
     }
 
     function showToast(message, type = "success") {
