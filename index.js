@@ -1514,6 +1514,36 @@
         }
     }
 
+    // Shared YouTube video-ID extractor — used by both the inline embed
+    // viewer and the transcript fetch below, so both agree on what
+    // counts as a YouTube link.
+    function extractYoutubeVideoId(url = "") {
+        const match = String(url).match(/(?:youtube\.com\/watch\?v=|youtu\.be\/)([\w-]+)/);
+        return match ? match[1] : null;
+    }
+
+    // Calls the youtube-transcript edge function to get caption text for
+    // a YouTube video, so the AI tutor can discuss what's actually said
+    // in the video — not just its title/link. Never throws: any failure
+    // (no captions, network error, function not deployed yet) just
+    // resolves to an empty string, and callers fall back to title/notes
+    // context only, same as before this feature existed.
+    async function fetchYoutubeTranscript(videoId) {
+        try {
+            const { data, error } = await supabase.functions.invoke("youtube-transcript", {
+                body: { videoId }
+            });
+            if (error) {
+                console.warn("YouTube transcript fetch failed.", error);
+                return "";
+            }
+            return typeof data?.transcript === "string" ? data.transcript : "";
+        } catch (error) {
+            console.warn("YouTube transcript fetch failed.", error);
+            return "";
+        }
+    }
+
     async function extractResourceStudyText(resource) {
         if (!resource) return "";
 
@@ -1521,6 +1551,11 @@
             .filter(Boolean).join("\n");
 
         if (resource.kind === "link") {
+            const videoId = extractYoutubeVideoId(resource.url || "");
+            if (videoId) {
+                const transcript = await fetchYoutubeTranscript(videoId);
+                return transcript ? `${metadata}\n\nVIDEO TRANSCRIPT:\n${transcript}` : metadata;
+            }
             return metadata;
         }
 
@@ -2461,9 +2496,9 @@ Rules for the assessment questions (these test comprehension of the material its
 
     function renderLinkViewer(resource) {
         const safeUrl = escapeHtml(resource.url);
-        const youtube = resource.url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/)([\w-]+)/);
-        if (youtube) {
-            els.workspaceViewer.innerHTML = `<iframe src="https://www.youtube.com/embed/${youtube[1]}" title="${escapeHtml(resource.title)}" allow="autoplay; encrypted-media; picture-in-picture" allowfullscreen></iframe>`;
+        const videoId = extractYoutubeVideoId(resource.url);
+        if (videoId) {
+            els.workspaceViewer.innerHTML = `<iframe src="https://www.youtube.com/embed/${videoId}" title="${escapeHtml(resource.title)}" allow="autoplay; encrypted-media; picture-in-picture" allowfullscreen></iframe>`;
             return;
         }
         els.workspaceViewer.innerHTML = `
