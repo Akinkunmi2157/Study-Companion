@@ -311,6 +311,7 @@
         soundSetting: document.getElementById("soundSetting"),
         saveSettings: document.getElementById("saveSettings"),
         resetAllData: document.getElementById("resetAllData"),
+        migrateToB2: document.getElementById("migrateToB2"),
 
         profileForm: document.getElementById("profileForm"),
         profileName: document.getElementById("profileName"),
@@ -2273,10 +2274,12 @@ Rules for the assessment questions (these test comprehension of the material its
     }
 
     // -------------------------------------------------------------
-    // SUPABASE STORAGE — resource files, synced across every device
-    // a student signs into. Replaces the old per-browser IndexedDB
-    // cache: files now live in the `study-resources` bucket under a
-    // path scoped to the signed-in user's id.
+    // BACKBLAZE B2 — resource files now live in B2, accessed via the
+    // `b2-presign` Supabase edge function (which signs short-lived
+    // PUT/GET/DELETE URLs scoped to the signed-in user's own folder).
+    // Legacy resources uploaded before this migration remain in the old
+    // Supabase Storage bucket (RESOURCE_BUCKET) and are still readable —
+    // see resource.storageProvider below and migrateResourcesToB2().
     // -------------------------------------------------------------
 
     function sanitiseFileName(name = "file") {
@@ -2295,27 +2298,42 @@ Rules for the assessment questions (these test comprehension of the material its
     // that was never going to succeed.
     const MAX_FILE_SIZE_BYTES = 50 * 1024 * 1024;
 
+    async function b2Presign(action, payload) {
+        const { data, error } = await supabase.functions.invoke("b2-presign", {
+            body: { action, ...payload }
+        });
+
+        if (error) {
+            let detail = "";
+            try {
+                const context = error.context;
+                if (context && typeof context.json === "function") {
+                    const body = await context.json();
+                    detail = body?.error || "";
+                }
+            } catch (_) {
+                // Ignore body parsing failure and use the generic message.
+            }
+            throw new Error(detail || error.message || "Could not reach file storage.");
+        }
+
+        if (data && data.error) throw new Error(data.error);
+        return data;
+    }
+
     async function uploadResourceFile(id, file, onProgress) {
         if (!currentUser) throw new Error("You must be signed in to upload a resource.");
-        const path = resourceStoragePath(currentUser.id, id, file.name);
 
-        // Uses a raw XHR PUT (instead of the Supabase JS client's
-        // fetch-based upload) purely because XHR exposes real upload
-        // progress events — fetch does not, for request bodies. Behaviour
-        // otherwise matches supabase.storage.upload(): same endpoint,
-        // same auth, same upsert semantics.
-        const { data: sessionData } = await supabase.auth.getSession();
-        const accessToken = sessionData?.session?.access_token;
-        if (!accessToken) throw new Error("Your session has expired. Please sign in again.");
+        const { url } = await b2Presign("upload", { resourceId: id, fileName: file.name });
 
+        // Raw XHR PUT (not fetch) purely because XHR exposes real upload
+        // progress events. The presigned URL is already fully authorized
+        // via its query-string signature — no Authorization header goes
+        // on this request, and adding one isn't needed or expected by B2.
         await new Promise((resolve, reject) => {
             const xhr = new XMLHttpRequest();
-            const endpoint = `${SUPABASE_URL}/storage/v1/object/${RESOURCE_BUCKET}/${path.split("/").map(encodeURIComponent).join("/")}`;
-            xhr.open("PUT", endpoint, true);
-            xhr.setRequestHeader("Authorization", `Bearer ${accessToken}`);
-            xhr.setRequestHeader("apikey", SUPABASE_ANON_KEY);
+            xhr.open("PUT", url, true);
             xhr.setRequestHeader("Content-Type", file.type || "application/octet-stream");
-            xhr.setRequestHeader("x-upsert", "true");
 
             if (xhr.upload && typeof onProgress === "function") {
                 xhr.upload.addEventListener("progress", event => {
@@ -2331,12 +2349,21 @@ Rules for the assessment questions (these test comprehension of the material its
             xhr.send(file);
         });
 
-        return path;
+        const path = resourceStoragePath(currentUser.id, id, file.name);
+        return { storagePath: path, storageProvider: "b2" };
     }
 
     async function getResourceFileBlob(resource) {
         if (!resource?.storagePath) return null;
         try {
+            if (resource.storageProvider === "b2") {
+                const { url } = await b2Presign("download", { path: resource.storagePath });
+                const response = await fetch(url);
+                if (!response.ok) throw new Error(`Download failed (status ${response.status}).`);
+                return await response.blob();
+            }
+
+            // Legacy resource — still in the original Supabase Storage bucket.
             const { data, error } = await supabase.storage
                 .from(RESOURCE_BUCKET)
                 .download(resource.storagePath);
@@ -2348,10 +2375,67 @@ Rules for the assessment questions (these test comprehension of the material its
         }
     }
 
-    async function removeResourceFile(storagePath) {
-        if (!storagePath) return;
-        const { error } = await supabase.storage.from(RESOURCE_BUCKET).remove([storagePath]);
-        if (error) console.warn("Could not remove resource file from cloud storage.", error);
+    async function removeResourceFile(resource) {
+        if (!resource?.storagePath) return;
+        try {
+            if (resource.storageProvider === "b2") {
+                await b2Presign("delete", { path: resource.storagePath });
+            } else {
+                const { error } = await supabase.storage.from(RESOURCE_BUCKET).remove([resource.storagePath]);
+                if (error) throw error;
+            }
+        } catch (error) {
+            console.warn("Could not remove resource file from cloud storage.", error);
+        }
+    }
+
+    async function migrateResourcesToB2() {
+        if (!currentUser) return;
+
+        const legacyResources = state.resources.filter(r => r.storagePath && r.storageProvider !== "b2");
+        if (!legacyResources.length) {
+            showToast("No resources need migrating — everything is already on Backblaze B2.");
+            return;
+        }
+
+        if (!window.confirm(`Migrate ${legacyResources.length} file(s) from Supabase Storage to Backblaze B2? This may take a while depending on file sizes.`)) return;
+
+        let migrated = 0;
+        let failed = 0;
+
+        for (const resource of legacyResources) {
+            try {
+                const { data: file, error: downloadError } = await supabase.storage
+                    .from(RESOURCE_BUCKET)
+                    .download(resource.storagePath);
+                if (downloadError || !file) throw downloadError || new Error("Empty file");
+
+                const fileForUpload = new File([file], resource.fileName || "file", {
+                    type: resource.mimeType || file.type || "application/octet-stream"
+                });
+
+                const { storagePath, storageProvider } = await uploadResourceFile(resource.id, fileForUpload);
+
+                // Only remove the old copy after the B2 upload succeeds.
+                await supabase.storage.from(RESOURCE_BUCKET).remove([resource.storagePath]);
+
+                resource.storagePath = storagePath;
+                resource.storageProvider = storageProvider;
+                migrated += 1;
+            } catch (error) {
+                console.error(`Could not migrate resource "${resource.title}".`, error);
+                failed += 1;
+            }
+        }
+
+        saveState();
+        renderAll();
+
+        if (failed) {
+            showToast(`Migrated ${migrated} file(s) to B2. ${failed} failed and remain on Supabase Storage — try again later.`, "warning");
+        } else {
+            showToast(`All ${migrated} file(s) migrated to Backblaze B2.`);
+        }
     }
 
     function getResource(id) { return state.resources.find(item => item.id === id); }
@@ -2427,6 +2511,7 @@ Rules for the assessment questions (these test comprehension of the material its
         let fileName = "";
         let fileSize = 0;
         let storagePath = "";
+        let storageProvider = "";
 
         if (file) {
             if (file.size > MAX_FILE_SIZE_BYTES) {
@@ -2446,9 +2531,11 @@ Rules for the assessment questions (these test comprehension of the material its
             if (submitButton) submitButton.disabled = true;
 
             try {
-                storagePath = await uploadResourceFile(id, file, percent => {
+                const uploadResult = await uploadResourceFile(id, file, percent => {
                     if (submitButton) submitButton.textContent = `Uploading… ${percent}%`;
                 });
+                storagePath = uploadResult.storagePath;
+                storageProvider = uploadResult.storageProvider;
             } catch (error) {
                 console.error(error);
                 showToast("This file could not be uploaded to your cloud library. Check your connection and try again.", "error");
@@ -2458,7 +2545,7 @@ Rules for the assessment questions (these test comprehension of the material its
             }
         }
 
-        state.resources.unshift({ id, title: els.resourceTitle.value.trim(), type, kind, url, mimeType, fileName, fileSize, storagePath, notes: els.resourceNotes.value.trim(), createdAt: Date.now() });
+        state.resources.unshift({ id, title: els.resourceTitle.value.trim(), type, kind, url, mimeType, fileName, fileSize, storagePath, storageProvider, notes: els.resourceNotes.value.trim(), createdAt: Date.now() });
         saveState();
         closeModal(els.resourceModal);
         renderAll();
@@ -2913,7 +3000,7 @@ Rules for the assessment questions (these test comprehension of the material its
 
     async function deleteResource(id) {
         const resource = getResource(id); if (!resource || !window.confirm(`Delete "${resource.title}" from your library?`)) return;
-        await removeResourceFile(resource.storagePath); state.resources = state.resources.filter(r => r.id !== id); state.tasks.forEach(t => { if (t.resourceId === id) t.resourceId = ""; }); saveState(); renderAll(); showToast("Resource deleted.", "warning");
+        await removeResourceFile(resource); state.resources = state.resources.filter(r => r.id !== id); state.tasks.forEach(t => { if (t.resourceId === id) t.resourceId = ""; }); saveState(); renderAll(); showToast("Resource deleted.", "warning");
     }
 
     function initials(name = "Student") { return name.split(/\s+/).filter(Boolean).slice(0, 2).map(part => part[0]).join("").toUpperCase() || "ST"; }
@@ -3167,6 +3254,7 @@ Rules for the assessment questions (these test comprehension of the material its
 
         els.saveSettings.addEventListener("click", saveSettings);
         els.resetAllData.addEventListener("click", resetAllData);
+        if (els.migrateToB2) els.migrateToB2.addEventListener("click", migrateResourcesToB2);
         document.addEventListener("visibilitychange", handleVisibilityChange);
         document.addEventListener("fullscreenchange", handleFullscreenChange);
         window.addEventListener("blur", handleWindowBlur);
