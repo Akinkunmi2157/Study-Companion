@@ -2515,12 +2515,42 @@ textarea.form-control {
     flex-wrap: wrap;
 }
 
+/* Tutor chat is a docked side panel (not a centered modal): the student
+   can keep the resource visible underneath while chatting about it,
+   the same pattern used by Notion AI / Intercom-style assistants. The
+   backdrop wrapper stays transparent and click-through when hidden so
+   it never blocks the rest of the page. */
+#tutorChatModal.modal-backdrop {
+    background: transparent;
+    backdrop-filter: none;
+}
+
+#tutorChatModal.hidden {
+    display: block !important;
+    pointer-events: none;
+}
+
+#tutorChatModal:not(.hidden) .tutor-chat-card {
+    transform: translateX(0);
+}
+
 .tutor-chat-card {
-    width: min(640px, calc(100vw - 32px));
-    max-height: 88vh;
+    position: fixed;
+    inset: 0 0 0 auto;
+    width: min(420px, 100vw);
+    height: 100vh;
+    max-height: 100vh;
+    margin: 0;
+    border: 0;
+    border-left: 1px solid var(--border);
+    border-radius: 0;
+    box-shadow: -20px 0 50px rgba(27, 39, 76, 0.14);
     display: flex;
     flex-direction: column;
-    padding: 22px 22px 18px;
+    padding: 20px 20px 16px;
+    transform: translateX(100%);
+    transition: transform 0.25s ease;
+    animation: none;
 }
 
 .modal-header-actions {
@@ -2538,7 +2568,6 @@ textarea.form-control {
 .tutor-chat-messages {
     flex: 1;
     min-height: 260px;
-    max-height: 50vh;
     overflow-y: auto;
     display: flex;
     flex-direction: column;
@@ -2643,12 +2672,7 @@ textarea.form-control {
 
 @media (max-width: 640px) {
     .tutor-chat-card {
-        width: calc(100vw - 18px);
-        padding: 16px;
-    }
-
-    .tutor-chat-messages {
-        max-height: 45vh;
+        width: 100vw;
     }
 }
 
