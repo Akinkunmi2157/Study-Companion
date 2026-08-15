@@ -748,11 +748,20 @@
         const htmlBlocks = [];
         let listBuffer = [];
         let listType = null; // "ul" | "ol"
+        // Tracks how many ordered-list items have been emitted so far in
+        // this whole message. The AI sometimes interleaves numbered items
+        // with explanatory paragraphs (e.g. "1. Term\nexplanation...\n2.
+        // Term"), which would otherwise flush/restart the <ol> and make
+        // every item render as "1." — this keeps the numbering continuous
+        // instead. Resets on headers/dividers, which are real section
+        // breaks where restarting at 1 is expected.
+        let olCounter = 0;
 
         function flushList() {
             if (!listBuffer.length) return;
             const items = listBuffer.map(item => `<li>${item}</li>`).join("");
-            htmlBlocks.push(`<${listType}>${items}</${listType}>`);
+            const startAttr = listType === "ol" ? ` start="${olCounter - listBuffer.length + 1}"` : "";
+            htmlBlocks.push(`<${listType}${startAttr}>${items}</${listType}>`);
             listBuffer = [];
             listType = null;
         }
@@ -769,9 +778,18 @@
 
             if (!line) { flushList(); continue; }
 
+            const dividerMatch = /^([-*_])\1{2,}$/.test(line);
+            if (dividerMatch) {
+                flushList();
+                olCounter = 0;
+                htmlBlocks.push("<hr>");
+                continue;
+            }
+
             const headerMatch = line.match(/^(#{1,6})\s+(.*)$/);
             if (headerMatch) {
                 flushList();
+                olCounter = 0;
                 const level = Math.min(headerMatch[1].length + 2, 6); // keep headers modest inside a chat bubble
                 htmlBlocks.push(`<h${level}>${inline(headerMatch[2])}</h${level}>`);
                 continue;
@@ -795,6 +813,7 @@
             if (numberedMatch) {
                 if (listType !== "ol") { flushList(); listType = "ol"; }
                 listBuffer.push(inline(numberedMatch[1]));
+                olCounter += 1;
                 continue;
             }
 
