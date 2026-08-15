@@ -2224,13 +2224,49 @@ Rules for the assessment questions (these test comprehension of the material its
         return `${userId}/${id}-${sanitiseFileName(fileName)}`;
     }
 
-    async function uploadResourceFile(id, file) {
+    // Free-tier Supabase projects cap any single file at 50MB — uploads
+    // past that limit fail on the server regardless of how patiently the
+    // student waits, so we check up front and fail fast with a clear
+    // message instead of leaving them staring at "Uploading…" for a file
+    // that was never going to succeed.
+    const MAX_FILE_SIZE_BYTES = 50 * 1024 * 1024;
+
+    async function uploadResourceFile(id, file, onProgress) {
         if (!currentUser) throw new Error("You must be signed in to upload a resource.");
         const path = resourceStoragePath(currentUser.id, id, file.name);
-        const { error } = await supabase.storage
-            .from(RESOURCE_BUCKET)
-            .upload(path, file, { upsert: true, contentType: file.type || "application/octet-stream" });
-        if (error) throw error;
+
+        // Uses a raw XHR PUT (instead of the Supabase JS client's
+        // fetch-based upload) purely because XHR exposes real upload
+        // progress events — fetch does not, for request bodies. Behaviour
+        // otherwise matches supabase.storage.upload(): same endpoint,
+        // same auth, same upsert semantics.
+        const { data: sessionData } = await supabase.auth.getSession();
+        const accessToken = sessionData?.session?.access_token;
+        if (!accessToken) throw new Error("Your session has expired. Please sign in again.");
+
+        await new Promise((resolve, reject) => {
+            const xhr = new XMLHttpRequest();
+            const endpoint = `${SUPABASE_URL}/storage/v1/object/${RESOURCE_BUCKET}/${path.split("/").map(encodeURIComponent).join("/")}`;
+            xhr.open("PUT", endpoint, true);
+            xhr.setRequestHeader("Authorization", `Bearer ${accessToken}`);
+            xhr.setRequestHeader("apikey", SUPABASE_ANON_KEY);
+            xhr.setRequestHeader("Content-Type", file.type || "application/octet-stream");
+            xhr.setRequestHeader("x-upsert", "true");
+
+            if (xhr.upload && typeof onProgress === "function") {
+                xhr.upload.addEventListener("progress", event => {
+                    if (event.lengthComputable) onProgress(Math.round((event.loaded / event.total) * 100));
+                });
+            }
+
+            xhr.onload = () => {
+                if (xhr.status >= 200 && xhr.status < 300) resolve();
+                else reject(new Error(`Upload failed (status ${xhr.status}). Check your connection and try again.`));
+            };
+            xhr.onerror = () => reject(new Error("Upload failed. Check your connection and try again."));
+            xhr.send(file);
+        });
+
         return path;
     }
 
@@ -2329,6 +2365,13 @@ Rules for the assessment questions (these test comprehension of the material its
         let storagePath = "";
 
         if (file) {
+            if (file.size > MAX_FILE_SIZE_BYTES) {
+                return showToast(
+                    `"${file.name}" is ${humanFileSize(file.size)} — the study library's free-tier limit is 50 MB per file. Try a shorter/compressed video, or use a YouTube link instead.`,
+                    "error"
+                );
+            }
+
             mimeType = file.type || "application/octet-stream";
             fileName = file.name;
             fileSize = file.size;
@@ -2336,10 +2379,12 @@ Rules for the assessment questions (these test comprehension of the material its
 
             const submitButton = els.resourceSubmitButton;
             const originalLabel = submitButton ? submitButton.textContent : "";
-            if (submitButton) { submitButton.disabled = true; submitButton.textContent = "Uploading…"; }
+            if (submitButton) submitButton.disabled = true;
 
             try {
-                storagePath = await uploadResourceFile(id, file);
+                storagePath = await uploadResourceFile(id, file, percent => {
+                    if (submitButton) submitButton.textContent = `Uploading… ${percent}%`;
+                });
             } catch (error) {
                 console.error(error);
                 showToast("This file could not be uploaded to your cloud library. Check your connection and try again.", "error");
