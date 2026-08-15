@@ -84,24 +84,34 @@
 
             if (error) {
                 let detail = "";
+                let code = "";
+                let retryAfterSeconds = null;
                 try {
                     const context = error.context;
                     if (context && typeof context.json === "function") {
                         const body = await context.json();
                         detail = body?.error || body?.message || "";
+                        code = body?.code || "";
+                        retryAfterSeconds = typeof body?.retryAfterSeconds === "number" ? body.retryAfterSeconds : null;
                     }
                 } catch (_) {
                     // Ignore body parsing failure and use the generic message.
                 }
 
                 console.error("Gemini Edge Function Error:", error);
-                throw new Error(detail || error.message || "The AI service could not be reached.");
+                const aiError = new Error(detail || error.message || "The AI service could not be reached.");
+                aiError.code = code || undefined;
+                aiError.retryAfterSeconds = retryAfterSeconds;
+                throw aiError;
             }
 
             // Surface an error the function itself reported in a 200 response
             if (data && typeof data === "object" && data.error) {
                 console.error("Gemini Edge Function returned an error payload:", data.error);
-                throw new Error(typeof data.error === "string" ? data.error : "The AI service reported an error.");
+                const aiError = new Error(typeof data.error === "string" ? data.error : "The AI service reported an error.");
+                aiError.code = data.code || undefined;
+                aiError.retryAfterSeconds = typeof data.retryAfterSeconds === "number" ? data.retryAfterSeconds : null;
+                throw aiError;
             }
 
             const text = extractAiText(data);
@@ -116,6 +126,20 @@
             throw err instanceof Error ? err : new Error("Error connecting to the AI service.");
         }
     }
+    // Turns a caught askGemini() error into a friendly, retry-aware message.
+    // Quota errors (Google's free-tier daily/per-minute limit) get a plain
+    // English explanation plus how long to wait, instead of raw Google JSON.
+    function describeAiError(error) {
+        if (error?.code === "quota_exceeded") {
+            const wait = Number(error.retryAfterSeconds);
+            const waitText = wait > 0
+                ? ` Please try again in about ${wait < 60 ? `${wait}s` : `${Math.ceil(wait / 60)} min`}.`
+                : " Please try again shortly.";
+            return `The AI has hit today's usage limit.${waitText}`;
+        }
+        return error?.message || "The AI service is temporarily unavailable. Please try again.";
+    }
+
     const defaultState = {
         tasks: [],
         sessions: [],
@@ -1775,7 +1799,7 @@
             setTutorTyping(false);
             tutorChat.history.push({
                 role: "assistant",
-                text: error?.message || "The tutor is temporarily unavailable. Please try again."
+                text: describeAiError(error)
             });
             renderTutorMessages();
         } finally {
@@ -1908,7 +1932,7 @@ Rules for the assessment questions (these test comprehension of the material its
         } catch (error) {
             console.error("Reflection verification failed:", error);
             els.reflectionAlignment.className = "alignment-status visible mismatch";
-            els.reflectionAlignment.textContent = error.message || "The summary could not be checked. Please try again.";
+            els.reflectionAlignment.textContent = describeAiError(error);
         } finally {
             // Reset button text and force re-evaluation of disabled state
             els.saveReflection.textContent = "Check summary & continue";
