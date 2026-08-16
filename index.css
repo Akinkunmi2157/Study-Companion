@@ -2539,7 +2539,9 @@ textarea.form-control {
     inset: 0 0 0 auto;
     width: min(420px, 100vw);
     height: 100vh;
+    height: 100dvh;
     max-height: 100vh;
+    max-height: 100dvh;
     margin: 0;
     border: 0;
     border-left: 1px solid var(--border);
@@ -2668,6 +2670,11 @@ textarea.form-control {
 .tutor-chat-form textarea {
     resize: none;
     flex: 1;
+    min-width: 0;
+}
+
+.tutor-chat-form #tutorChatSend {
+    flex-shrink: 0;
 }
 
 @media (max-width: 640px) {
