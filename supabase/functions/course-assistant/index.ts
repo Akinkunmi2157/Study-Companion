@@ -30,6 +30,20 @@ function cleanText(value: unknown, max = 60000) {
   return String(value ?? "").trim().slice(0, max);
 }
 
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// Gemini returns 429 (rate limited) or 503 (model overloaded / "high demand")
+// for conditions that are almost always transient and resolve within seconds.
+// Retry those specific statuses with a short exponential backoff before
+// giving up. Everything else (400s like a bad/retired model name, 401/403
+// auth issues, etc.) fails immediately, since retrying those just wastes
+// 40s of the student's time on an error that will never change.
+const RETRYABLE_STATUSES = new Set([429, 503]);
+const MAX_ATTEMPTS = 3;
+const BASE_DELAY_MS = 500;
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
@@ -119,9 +133,6 @@ Deno.serve(async (req) => {
       parts: [{ text: prompt }],
     });
 
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 40000);
-
     // Gemini deprecates/retires specific model snapshots over time — Google
     // returns a 404 with an "... is no longer available ..." message when
     // that happens (rather than a clean version-negotiation error), so this
@@ -129,42 +140,68 @@ Deno.serve(async (req) => {
     // from this fetch again, check the error body Gemini returns for the
     // model name it now recommends and update GEMINI_MODEL below.
     const GEMINI_MODEL = "gemini-3.6-flash";
+    const GEMINI_URL =
+      `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
 
-    let response: Response;
-    try {
-      response = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`,
-        {
+    const requestBody = JSON.stringify({
+      contents,
+      generationConfig: {
+        temperature: mode === "assessment" ? 0.15 : 0.35,
+        maxOutputTokens: mode === "assessment" ? 3072 : 2048,
+      },
+    });
+
+    let response: Response | undefined;
+    let payload: any = {};
+
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 40000);
+
+      try {
+        response = await fetch(GEMINI_URL, {
           method: "POST",
           signal: controller.signal,
           headers: {
             "Content-Type": "application/json",
             "x-goog-api-key": apiKey,
           },
-          body: JSON.stringify({
-            contents,
-            generationConfig: {
-              temperature: mode === "assessment" ? 0.15 : 0.35,
-              maxOutputTokens: mode === "assessment" ? 3072 : 2048,
-            },
-          }),
-        },
+          body: requestBody,
+        });
+      } finally {
+        clearTimeout(timer);
+      }
+
+      payload = await response.json().catch(() => ({}));
+
+      if (response.ok) break;
+
+      const isRetryable = RETRYABLE_STATUSES.has(response.status);
+      const isLastAttempt = attempt === MAX_ATTEMPTS;
+
+      console.error(
+        `Gemini API error (attempt ${attempt}/${MAX_ATTEMPTS}):`,
+        response.status,
+        payload,
       );
-    } finally {
-      clearTimeout(timer);
+
+      if (!isRetryable || isLastAttempt) break;
+
+      // Exponential backoff: 500ms, 1000ms, ... plus a little jitter so
+      // concurrent requests from multiple students don't retry in lockstep.
+      const delay = BASE_DELAY_MS * 2 ** (attempt - 1) + Math.random() * 200;
+      await sleep(delay);
     }
 
-    const payload = await response.json().catch(() => ({}));
-
-    if (!response.ok) {
-      console.error("Gemini API error:", response.status, payload);
+    if (!response || !response.ok) {
+      const status = response?.status ?? 502;
       return json(
         {
           error:
             payload?.error?.message ||
-            `Gemini request failed with status ${response.status}.`,
+            `Gemini request failed with status ${status}.`,
         },
-        response.status >= 400 && response.status < 600 ? response.status : 502,
+        status >= 400 && status < 600 ? status : 502,
       );
     }
 
