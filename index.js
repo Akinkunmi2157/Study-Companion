@@ -351,7 +351,6 @@
         assessmentForm: document.getElementById("assessmentForm"),
         assessmentSummaryStatus: document.getElementById("assessmentSummaryStatus"),
         objectiveQuestions: document.getElementById("objectiveQuestions"),
-        theoryQuestions: document.getElementById("theoryQuestions"),
         assessmentValidation: document.getElementById("assessmentValidation"),
         backToReflection: document.getElementById("backToReflection"),
 
@@ -1812,20 +1811,15 @@
 
     function normaliseAssessment(payload) {
         const objective = Array.isArray(payload?.objectiveQuestions) ? payload.objectiveQuestions : [];
-        const theory = Array.isArray(payload?.theoryQuestions) ? payload.theoryQuestions : [];
         return {
             aligned: payload?.aligned === true,
             alignmentScore: Math.max(0, Math.min(100, Number(payload?.alignmentScore) || 0)),
             feedback: String(payload?.feedback || ""),
-            objectiveQuestions: objective.slice(0, 10).map((item, index) => ({
+            objectiveQuestions: objective.slice(0, 5).map((item, index) => ({
                 question: String(item?.question || `Question ${index + 1}`),
                 options: Array.isArray(item?.options) ? item.options.slice(0, 4).map(String) : [],
                 correctAnswer: Math.max(0, Math.min(3, Number(item?.correctAnswer) || 0)),
                 explanation: String(item?.explanation || "")
-            })),
-            theoryQuestions: theory.slice(0, 2).map((item, index) => ({
-                question: String(item?.question || `Theory question ${index + 1}`),
-                modelAnswer: String(item?.modelAnswer || "")
             }))
         };
     }
@@ -1850,9 +1844,6 @@ Return ONLY valid JSON with this exact structure:
   "feedback": "brief evidence-based feedback",
   "objectiveQuestions": [
     {"question":"", "options":["","","",""], "correctAnswer":0, "explanation":""}
-  ],
-  "theoryQuestions": [
-    {"question":"", "modelAnswer":""}
   ]
 }
 
@@ -1864,14 +1855,14 @@ Rules for judging "aligned" (this is the important part):
 - alignmentScore (0-100) should reflect depth of topical understanding, not textual similarity to the resource. Require at least 60 for aligned=true.
 
 Rules for the assessment questions (these test comprehension of the material itself, separately from the alignment judgment above):
-- Generate exactly 10 objective multiple-choice questions with exactly 4 options each, drawn from the resource content.
+- Generate exactly 5 objective multiple-choice questions with exactly 4 options each, drawn from the resource content.
 - correctAnswer must be the zero-based index of the correct option.
-- Generate exactly 2 theory questions with concise model answers, drawn from the resource content.`;
+- Include a brief "explanation" for each question so the student can review why the correct answer is correct.`;
 
         const response = await askGemini(prompt, { mode: "assessment" });
         if (!response) throw new Error("The resource check could not be completed.");
         const assessment = normaliseAssessment(parseJsonObjectFromAi(response));
-        if (assessment.objectiveQuestions.length !== 10 || assessment.objectiveQuestions.some(q => q.options.length !== 4) || assessment.theoryQuestions.length !== 2) {
+        if (assessment.objectiveQuestions.length !== 5 || assessment.objectiveQuestions.some(q => q.options.length !== 4)) {
             throw new Error("The generated assessment was incomplete. Please try again.");
         }
         return assessment;
@@ -1891,11 +1882,6 @@ Rules for the assessment questions (these test comprehension of the material its
                     </label>`).join("")}
             </fieldset>`).join("");
 
-        els.theoryQuestions.innerHTML = assessment.theoryQuestions.map((item, index) => `
-            <label class="assessment-question theory-question">
-                <strong>${index + 1}. ${escapeHtml(item.question)}</strong>
-                <textarea class="form-control" rows="4" minlength="20" maxlength="1000" data-theory-answer="${index}" placeholder="Answer in your own words..."></textarea>
-            </label>`).join("");
         els.assessmentValidation.textContent = "";
     }
     async function saveReflection() {
@@ -1958,7 +1944,7 @@ Rules for the assessment questions (these test comprehension of the material its
     // generated in normaliseAssessment(). This data was previously
     // discarded after scoring.
     // -------------------------------------------------------------
-    function openAssessmentResultsModal(assessment, objectiveAnswers, theoryAnswers, objectiveScore, onContinue) {
+    function openAssessmentResultsModal(assessment, objectiveAnswers, objectiveScore, onContinue) {
         const backdrop = document.createElement("div");
         backdrop.className = "modal-backdrop";
 
@@ -1992,14 +1978,6 @@ Rules for the assessment questions (these test comprehension of the material its
             `;
         }).join("");
 
-        const theoryHtml = assessment.theoryQuestions.map((item, index) => `
-            <div class="assessment-question theory-question">
-                <strong>${index + 1}. ${escapeHtml(item.question)}</strong>
-                <p style="margin:0;color:var(--text);line-height:1.6;"><strong>Your answer:</strong> ${escapeHtml(theoryAnswers[index] || "")}</p>
-                <p style="margin:0;color:var(--muted);line-height:1.6;"><strong>Model answer:</strong> ${escapeHtml(item.modelAnswer)}</p>
-            </div>
-        `).join("");
-
         backdrop.innerHTML = `
             <div class="modal-card assessment-card">
                 <div class="modal-header">
@@ -2008,17 +1986,13 @@ Rules for the assessment questions (these test comprehension of the material its
                         <h3>Review your answers</h3>
                     </div>
                 </div>
-                <div class="assessment-summary-status ${objectiveScore >= 6 ? "match" : "mismatch"}">
-                    <strong>Objective score: ${objectiveScore}/${assessment.objectiveQuestions.length}</strong>
+                <div class="assessment-summary-status ${objectiveScore >= 3 ? "match" : "mismatch"}">
+                    <strong>Grade: ${objectiveScore}/${assessment.objectiveQuestions.length}</strong>
                     <p>Go through each question below to see the correct answer and why it's correct.</p>
                 </div>
                 <section class="assessment-section">
                     <h4>Objective questions</h4>
                     <div class="assessment-question-list">${objectiveHtml}</div>
-                </section>
-                <section class="assessment-section">
-                    <h4>Theory questions</h4>
-                    <div class="assessment-question-list">${theoryHtml}</div>
                 </section>
                 <div class="modal-actions">
                     <button class="primary-button" id="closeAssessmentResultsButton">Continue</button>
@@ -2050,10 +2024,9 @@ Rules for the assessment questions (these test comprehension of the material its
             const selected = els.assessmentForm.querySelector(`input[name="objective-${index}"]:checked`);
             return selected ? Number(selected.value) : null;
         });
-        const theoryAnswers = [...els.assessmentForm.querySelectorAll("[data-theory-answer]")].map(input => input.value.trim());
 
-        if (objectiveAnswers.some(answer => answer === null) || theoryAnswers.some(answer => answer.length < 20)) {
-            els.assessmentValidation.textContent = "Answer all 10 objective questions and both theory questions. Each theory answer must contain at least 20 characters.";
+        if (objectiveAnswers.some(answer => answer === null)) {
+            els.assessmentValidation.textContent = "Answer all 5 questions before submitting.";
             return;
         }
 
@@ -2069,11 +2042,9 @@ Rules for the assessment questions (these test comprehension of the material its
             summaryAlignmentScore: assessment.alignmentScore,
             assessment: {
                 objectiveScore,
-                objectiveTotal: 10,
+                objectiveTotal: assessment.objectiveQuestions.length,
                 objectiveAnswers,
-                objectiveQuestions: assessment.objectiveQuestions,
-                theoryAnswers,
-                theoryQuestions: assessment.theoryQuestions
+                objectiveQuestions: assessment.objectiveQuestions
             },
             integrity: timer.pendingCompletion.focusViolations === 0 && timer.pendingCompletion.checksFailed === 0 ? "verified" : "flagged"
         };
@@ -2085,10 +2056,10 @@ Rules for the assessment questions (these test comprehension of the material its
         timer.pendingCompletion = null;
         timer.pendingAssessment = null;
 
-        // Show the review-your-answers screen (with explanations) before
-        // advancing the timer, instead of jumping straight to the next
-        // break/focus cycle.
-        openAssessmentResultsModal(assessment, objectiveAnswers, theoryAnswers, objectiveScore, () => {
+        // Show the review-your-answers screen (grade + correct/missed
+        // options with explanations) before advancing the timer, instead
+        // of jumping straight to the next break/focus cycle.
+        openAssessmentResultsModal(assessment, objectiveAnswers, objectiveScore, () => {
             const nextMode = timer.cycle >= state.settings.cyclesBeforeLongBreak ? "longBreak" : "shortBreak";
             if (timer.cycle >= state.settings.cyclesBeforeLongBreak) timer.cycle = 1;
             else timer.cycle += 1;
@@ -2096,7 +2067,7 @@ Rules for the assessment questions (these test comprehension of the material its
             els.sessionGoal.value = "";
             els.goalCount.textContent = "0";
             renderAll();
-            showToast(`Verified session logged. Objective score: ${objectiveScore}/10.`);
+            showToast(`Verified session logged. Grade: ${objectiveScore}/${assessment.objectiveQuestions.length}.`);
         });
     }
 
@@ -2180,14 +2151,15 @@ Rules for the assessment questions (these test comprehension of the material its
     function viewSessionResults(id) {
         const session = state.sessions.find(item => item.id === id);
         if (!session || !session.assessment) return;
+        // Older sessions logged before the 5-question format may still
+        // carry theoryQuestions/theoryAnswers in storage — harmless to
+        // ignore here since the results modal no longer renders them.
         const assessment = {
-            objectiveQuestions: session.assessment.objectiveQuestions,
-            theoryQuestions: session.assessment.theoryQuestions
+            objectiveQuestions: session.assessment.objectiveQuestions
         };
         openAssessmentResultsModal(
             assessment,
             session.assessment.objectiveAnswers,
-            session.assessment.theoryAnswers,
             session.assessment.objectiveScore,
             () => { }
         );
