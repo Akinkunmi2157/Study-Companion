@@ -122,10 +122,18 @@ Deno.serve(async (req) => {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 40000);
 
+    // Gemini deprecates/retires specific model snapshots over time — Google
+    // returns a 404 with an "... is no longer available ..." message when
+    // that happens (rather than a clean version-negotiation error), so this
+    // model id occasionally needs to be bumped. If you start seeing 404s
+    // from this fetch again, check the error body Gemini returns for the
+    // model name it now recommends and update GEMINI_MODEL below.
+    const GEMINI_MODEL = "gemini-3.6-flash";
+
     let response: Response;
     try {
       response = await fetch(
-        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
+        `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`,
         {
           method: "POST",
           signal: controller.signal,
