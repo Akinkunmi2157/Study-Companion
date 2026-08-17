@@ -137,7 +137,7 @@ Deno.serve(async (req) => {
             contents,
             generationConfig: {
               temperature: mode === "assessment" ? 0.15 : 0.35,
-              maxOutputTokens: mode === "assessment" ? 8192 : 2048,
+              maxOutputTokens: mode === "assessment" ? 3072 : 2048,
             },
           }),
         },
