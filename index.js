@@ -585,6 +585,7 @@
         if (timer.running && !window.confirm("A focus session is running. Log out anyway?")) return;
 
         revokeBlobUrl();
+        setTutorAccessEnabled(true);
         await flushSaveState();
         await supabase.auth.signOut();
         currentUser = null;
@@ -1401,6 +1402,12 @@
                 checksPassed: timer.checksPassed,
                 checksFailed: timer.checksFailed
             };
+            // Reflection/assessment are meant to measure the student's
+            // unaided understanding, so the AI tutor is made unavailable
+            // for the whole reflection -> assessment sequence. Restored in
+            // discardSession() and at the end of the results review in
+            // submitAssessment().
+            setTutorAccessEnabled(false);
             prepareReflectionModal();
             openModal(els.reflectionModal);
             return;
@@ -1683,6 +1690,26 @@
     // Reuses extractResourceStudyText() for context and the same
     // gemini-chat edge function as the reflection/assessment flow.
     // -------------------------------------------------------------
+
+    // Disables the "Ask Tutor" entry point and force-closes any open tutor
+    // chat window. Used to make sure a student can't consult the AI tutor
+    // while writing their reflection or taking the comprehension assessment
+    // — those steps are meant to measure unaided understanding of the
+    // resource. Access is restored once that flow ends (discarded, or
+    // fully completed through the results review).
+    function setTutorAccessEnabled(enabled) {
+        if (els.openTutorChat) {
+            els.openTutorChat.disabled = !enabled;
+            els.openTutorChat.classList.toggle("tutor-access-disabled", !enabled);
+            els.openTutorChat.title = enabled
+                ? ""
+                : "Tutor chat is unavailable while completing your reflection and assessment.";
+        }
+        if (!enabled) {
+            closeModal(els.tutorChatModal);
+        }
+    }
+
     async function openTutorChatFor(resourceId) {
         const resource = getResource(resourceId);
         if (!resource) return showToast("Open a resource first to chat with the tutor about it.", "error");
@@ -2066,6 +2093,9 @@ Rules for the assessment questions (these test comprehension of the material its
             setTimerMode(nextMode, true);
             els.sessionGoal.value = "";
             els.goalCount.textContent = "0";
+            // The reflection/assessment sequence is now fully finished —
+            // restore normal tutor access.
+            setTutorAccessEnabled(true);
             renderAll();
             showToast(`Verified session logged. Grade: ${objectiveScore}/${assessment.objectiveQuestions.length}.`);
         });
@@ -2083,6 +2113,8 @@ Rules for the assessment questions (these test comprehension of the material its
         timer.pendingCompletion = null;
         timer.pendingAssessment = null;
         closeModal(els.reflectionModal);
+        // Reflection/assessment abandoned — restore normal tutor access.
+        setTutorAccessEnabled(true);
 
         const nextMode =
             timer.cycle >= state.settings.cyclesBeforeLongBreak ? "longBreak" : "shortBreak";
