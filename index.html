@@ -891,9 +891,14 @@
                 </div>
             </div>
             <div class="tutor-chat-messages" id="tutorChatMessages"></div>
+            <div class="tutor-chat-attachment-preview hidden" id="tutorChatAttachmentPreview"></div>
             <form id="tutorChatForm" class="tutor-chat-form">
+                <input type="file" id="tutorChatFileInput" class="hidden"
+                    accept="image/png,image/jpeg,image/webp,image/heic,image/heif,application/pdf" />
+                <button type="button" class="icon-button tutor-chat-attach" id="tutorChatAttachButton"
+                    title="Attach an image or PDF" aria-label="Attach an image or PDF">📎</button>
                 <textarea id="tutorChatInput" class="form-control" rows="2" maxlength="1000"
-                    placeholder="Ask a question about this resource…" required></textarea>
+                    placeholder="Ask a question about this resource…"></textarea>
                 <button class="primary-button" type="submit" id="tutorChatSend">Send</button>
             </form>
         </div>
