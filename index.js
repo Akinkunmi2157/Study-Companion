@@ -190,9 +190,20 @@
         resourceId: null,
         resourceTitle: "",
         context: "",
-        history: [], // [{ role: "user" | "assistant", text }]
-        sending: false
+        history: [], // [{ role: "user" | "assistant", text, attachmentName? }]
+        sending: false,
+        // Pending attachment for the NEXT message only. { base64, mimeType, name }
+        attachment: null
     };
+
+    // Files the tutor chat accepts as attachments, and Gemini's inline-data
+    // size ceiling (kept comfortably under Gemini's ~20MB total request cap,
+    // since base64 inflates raw bytes by ~33%).
+    const TUTOR_ATTACHMENT_TYPES = [
+        "image/png", "image/jpeg", "image/webp", "image/heic", "image/heif",
+        "application/pdf"
+    ];
+    const TUTOR_ATTACHMENT_MAX_BYTES = 15 * 1024 * 1024;
 
     const els = {
         authShell: document.getElementById("authShell"),
@@ -247,6 +258,9 @@
         tutorChatInput: document.getElementById("tutorChatInput"),
         tutorChatSend: document.getElementById("tutorChatSend"),
         clearTutorChat: document.getElementById("clearTutorChat"),
+        tutorChatAttachButton: document.getElementById("tutorChatAttachButton"),
+        tutorChatFileInput: document.getElementById("tutorChatFileInput"),
+        tutorChatAttachmentPreview: document.getElementById("tutorChatAttachmentPreview"),
 
         dashboardStreak: document.getElementById("dashboardStreak"),
         dashboardHours: document.getElementById("dashboardHours"),
@@ -585,7 +599,6 @@
         if (timer.running && !window.confirm("A focus session is running. Log out anyway?")) return;
 
         revokeBlobUrl();
-        setTutorAccessEnabled(true);
         await flushSaveState();
         await supabase.auth.signOut();
         currentUser = null;
@@ -1402,12 +1415,6 @@
                 checksPassed: timer.checksPassed,
                 checksFailed: timer.checksFailed
             };
-            // Reflection/assessment are meant to measure the student's
-            // unaided understanding, so the AI tutor is made unavailable
-            // for the whole reflection -> assessment sequence. Restored in
-            // discardSession() and at the end of the results review in
-            // submitAssessment().
-            setTutorAccessEnabled(false);
             prepareReflectionModal();
             openModal(els.reflectionModal);
             return;
@@ -1690,26 +1697,6 @@
     // Reuses extractResourceStudyText() for context and the same
     // gemini-chat edge function as the reflection/assessment flow.
     // -------------------------------------------------------------
-
-    // Disables the "Ask Tutor" entry point and force-closes any open tutor
-    // chat window. Used to make sure a student can't consult the AI tutor
-    // while writing their reflection or taking the comprehension assessment
-    // — those steps are meant to measure unaided understanding of the
-    // resource. Access is restored once that flow ends (discarded, or
-    // fully completed through the results review).
-    function setTutorAccessEnabled(enabled) {
-        if (els.openTutorChat) {
-            els.openTutorChat.disabled = !enabled;
-            els.openTutorChat.classList.toggle("tutor-access-disabled", !enabled);
-            els.openTutorChat.title = enabled
-                ? ""
-                : "Tutor chat is unavailable while completing your reflection and assessment.";
-        }
-        if (!enabled) {
-            closeModal(els.tutorChatModal);
-        }
-    }
-
     async function openTutorChatFor(resourceId) {
         const resource = getResource(resourceId);
         if (!resource) return showToast("Open a resource first to chat with the tutor about it.", "error");
@@ -1719,6 +1706,8 @@
             tutorChat.resourceTitle = resource.title;
             tutorChat.history = [];
             tutorChat.context = "";
+            tutorChat.attachment = null;
+            renderTutorAttachmentPreview();
         }
 
         els.tutorChatResourceNote.textContent = `About: ${resource.title}`;
@@ -1735,6 +1724,8 @@
 
     function resetTutorChat() {
         tutorChat.history = [];
+        tutorChat.attachment = null;
+        renderTutorAttachmentPreview();
         renderTutorMessages();
         els.tutorChatInput.value = "";
         els.tutorChatInput.focus();
@@ -1747,7 +1738,10 @@
         }
 
         els.tutorChatMessages.innerHTML = tutorChat.history.map(msg => `
-            <div class="tutor-msg ${msg.role === "user" ? "user" : "assistant"}">${msg.role === "assistant" ? renderMarkdown(msg.text) : escapeHtml(msg.text)}</div>
+            <div class="tutor-msg ${msg.role === "user" ? "user" : "assistant"}">
+                ${msg.attachmentName ? `<div class="tutor-msg-attachment">📎 ${escapeHtml(msg.attachmentName)}</div>` : ""}
+                ${msg.role === "assistant" ? renderMarkdown(msg.text) : escapeHtml(msg.text)}
+            </div>
         `).join("");
         els.tutorChatMessages.scrollTop = els.tutorChatMessages.scrollHeight;
     }
@@ -1777,12 +1771,73 @@
         return RESOURCE_REFERENCE_PATTERN.test(question);
     }
 
+    // Reads a File as a base64 string (no "data:...;base64," prefix), the
+    // shape Gemini's inline_data expects.
+    function fileToBase64(file) {
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(String(reader.result).split(",")[1] || "");
+            reader.onerror = () => reject(new Error("Could not read that file."));
+            reader.readAsDataURL(file);
+        });
+    }
+
+    async function handleTutorFileSelected(event) {
+        const file = event.target.files?.[0];
+        event.target.value = ""; // allow re-selecting the same file later
+        if (!file) return;
+
+        if (!TUTOR_ATTACHMENT_TYPES.includes(file.type)) {
+            showToast("Attach an image (PNG/JPEG/WEBP/HEIC) or a PDF.", "error");
+            return;
+        }
+        if (file.size > TUTOR_ATTACHMENT_MAX_BYTES) {
+            showToast("That file is too large to attach (max 15MB).", "error");
+            return;
+        }
+
+        try {
+            const base64 = await fileToBase64(file);
+            tutorChat.attachment = { base64, mimeType: file.type, name: file.name };
+            renderTutorAttachmentPreview();
+        } catch (error) {
+            console.error("Failed to read tutor attachment:", error);
+            showToast("Could not read that file. Try another.", "error");
+        }
+    }
+
+    function clearTutorAttachment() {
+        tutorChat.attachment = null;
+        renderTutorAttachmentPreview();
+    }
+
+    function renderTutorAttachmentPreview() {
+        if (!els.tutorChatAttachmentPreview) return;
+        const attachment = tutorChat.attachment;
+        if (!attachment) {
+            els.tutorChatAttachmentPreview.innerHTML = "";
+            els.tutorChatAttachmentPreview.classList.add("hidden");
+            return;
+        }
+        const icon = attachment.mimeType === "application/pdf" ? "📄" : "🖼️";
+        els.tutorChatAttachmentPreview.classList.remove("hidden");
+        els.tutorChatAttachmentPreview.innerHTML = `
+            <span class="tutor-attachment-chip">
+                ${icon} ${escapeHtml(attachment.name)}
+                <button type="button" id="tutorChatRemoveAttachment" aria-label="Remove attachment">✕</button>
+            </span>
+        `;
+        const removeButton = document.getElementById("tutorChatRemoveAttachment");
+        if (removeButton) removeButton.addEventListener("click", clearTutorAttachment);
+    }
+
     async function sendTutorChatMessage(event) {
         event.preventDefault();
         if (tutorChat.sending) return;
 
         const question = els.tutorChatInput.value.trim();
-        if (!question) return;
+        const attachment = tutorChat.attachment;
+        if (!question && !attachment) return;
 
         const resource = getResource(tutorChat.resourceId);
         if (!resource) return showToast("That resource is no longer available.", "error");
@@ -1790,7 +1845,13 @@
         tutorChat.sending = true;
         els.tutorChatSend.disabled = true;
         els.tutorChatInput.value = "";
-        tutorChat.history.push({ role: "user", text: question });
+        tutorChat.history.push({
+            role: "user",
+            text: question || (attachment ? `[Attached: ${attachment.name}]` : ""),
+            attachmentName: attachment?.name || null
+        });
+        tutorChat.attachment = null;
+        renderTutorAttachmentPreview();
         renderTutorMessages();
         setTutorTyping(true);
 
@@ -1809,12 +1870,18 @@
             // edge function still receives the full resourceContext either
             // way in case it wants it for background, but these flags tell
             // it which mode to use.
-            const answer = await askGemini(question, {
+            const answer = await askGemini(question || "Look at the attached file and help me understand it.", {
                 mode: "tutor",
                 resourceTitle: tutorChat.resourceTitle,
                 resourceContext: useResourceContext ? tutorChat.context.slice(0, 60000) : "",
                 groundingMode: messageReferencesResource(question) ? "resource" : "general",
-                chatHistory: historyForApi.slice(-12)
+                chatHistory: historyForApi.slice(-12),
+                // Inline file data for Gemini's multimodal input. The
+                // gemini-chat edge function must forward this as an
+                // inline_data part alongside the text prompt — see notes.
+                attachment: attachment
+                    ? { mimeType: attachment.mimeType, data: attachment.base64 }
+                    : null
             });
 
             setTutorTyping(false);
@@ -2093,9 +2160,6 @@ Rules for the assessment questions (these test comprehension of the material its
             setTimerMode(nextMode, true);
             els.sessionGoal.value = "";
             els.goalCount.textContent = "0";
-            // The reflection/assessment sequence is now fully finished —
-            // restore normal tutor access.
-            setTutorAccessEnabled(true);
             renderAll();
             showToast(`Verified session logged. Grade: ${objectiveScore}/${assessment.objectiveQuestions.length}.`);
         });
@@ -2113,8 +2177,6 @@ Rules for the assessment questions (these test comprehension of the material its
         timer.pendingCompletion = null;
         timer.pendingAssessment = null;
         closeModal(els.reflectionModal);
-        // Reflection/assessment abandoned — restore normal tutor access.
-        setTutorAccessEnabled(true);
 
         const nextMode =
             timer.cycle >= state.settings.cyclesBeforeLongBreak ? "longBreak" : "shortBreak";
@@ -3170,6 +3232,10 @@ Rules for the assessment questions (these test comprehension of the material its
         els.openTutorChat.addEventListener("click", () => openTutorChatFor(timer.activeResourceId));
         els.tutorChatForm.addEventListener("submit", sendTutorChatMessage);
         els.clearTutorChat.addEventListener("click", resetTutorChat);
+        if (els.tutorChatAttachButton && els.tutorChatFileInput) {
+            els.tutorChatAttachButton.addEventListener("click", () => els.tutorChatFileInput.click());
+            els.tutorChatFileInput.addEventListener("change", handleTutorFileSelected);
+        }
         els.tutorChatInput.addEventListener("keydown", event => {
             if (event.key === "Enter" && !event.shiftKey) {
                 event.preventDefault();
