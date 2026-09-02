@@ -144,7 +144,7 @@
         tasks: [],
         sessions: [],
         resources: [],
-        profile: { name: "", email: "", school: "", course: "", bio: "", photo: "" },
+        profile: { name: "", email: "", school: "", course: "", department: "", level: "", bio: "", photo: "" },
         settings: {
             focusMinutes: 25,
             shortBreakMinutes: 5,
@@ -332,6 +332,8 @@
         profileEmail: document.getElementById("profileEmail"),
         profileSchool: document.getElementById("profileSchool"),
         profileCourse: document.getElementById("profileCourse"),
+        profileDepartment: document.getElementById("profileDepartment"),
+        profileLevel: document.getElementById("profileLevel"),
         profileBio: document.getElementById("profileBio"),
         profileAvatarLarge: document.getElementById("profileAvatarLarge"),
         profileDisplayName: document.getElementById("profileDisplayName"),
@@ -1870,12 +1872,32 @@
             // edge function still receives the full resourceContext either
             // way in case it wants it for background, but these flags tell
             // it which mode to use.
+            const p = state.profile || {};
+            // Only send fields the student has actually filled in — an
+            // empty object tells the edge function "no profile on file"
+            // rather than making it explain four blank fields back.
+            const studentProfile = {
+                name: p.name || "",
+                school: p.school || "",
+                course: p.course || "",
+                department: p.department || "",
+                level: p.level || "",
+            };
+            const hasStudentProfile = Object.values(studentProfile).some(Boolean);
+
             const answer = await askGemini(question || "Look at the attached file and help me understand it.", {
                 mode: "tutor",
                 resourceTitle: tutorChat.resourceTitle,
                 resourceContext: useResourceContext ? tutorChat.context.slice(0, 60000) : "",
                 groundingMode: messageReferencesResource(question) ? "resource" : "general",
                 chatHistory: historyForApi.slice(-12),
+                // The student's own profile details (name/school/course/
+                // department/level), so the tutor can answer identity-type
+                // questions ("what's my name/department/level") and
+                // personalise explanations without the student repeating
+                // themselves every session. Omitted entirely if the
+                // student hasn't filled in a profile yet.
+                studentProfile: hasStudentProfile ? studentProfile : null,
                 // Inline file data for Gemini's multimodal input. The
                 // gemini-chat edge function must forward this as an
                 // inline_data part alongside the text prompt — see notes.
@@ -3081,11 +3103,11 @@ Rules for the assessment questions (these test comprehension of the material its
         applyAvatar(els.profileShortcut, p); applyAvatar(els.profileAvatarLarge, p, true);
         els.removeProfilePhoto.classList.toggle("hidden", !p.photo);
         els.profileDisplayName.textContent = has ? p.name : "Create your student profile";
-        els.profileDisplayMeta.textContent = has ? [p.course, p.school].filter(Boolean).join(" • ") || p.email : "Add your details to personalise your study experience.";
-        els.profileName.value = p.name || ""; els.profileEmail.value = p.email || ""; els.profileSchool.value = p.school || ""; els.profileCourse.value = p.course || ""; els.profileBio.value = p.bio || "";
+        els.profileDisplayMeta.textContent = has ? [p.course, p.department, p.level, p.school].filter(Boolean).join(" • ") || p.email : "Add your details to personalise your study experience.";
+        els.profileName.value = p.name || ""; els.profileEmail.value = p.email || ""; els.profileSchool.value = p.school || ""; els.profileCourse.value = p.course || ""; els.profileDepartment.value = p.department || ""; els.profileLevel.value = p.level || ""; els.profileBio.value = p.bio || "";
         els.profileResourceCount.textContent = state.resources.length; els.profileTaskCount.textContent = state.tasks.length; els.profileSessionCount.textContent = state.sessions.length;
     }
-    function saveProfile(event) { event.preventDefault(); state.profile = { ...state.profile, name: els.profileName.value.trim(), email: els.profileEmail.value.trim(), school: els.profileSchool.value.trim(), course: els.profileCourse.value.trim(), bio: els.profileBio.value.trim() }; saveState(); renderProfile(); showToast("Student profile saved."); }
+    function saveProfile(event) { event.preventDefault(); state.profile = { ...state.profile, name: els.profileName.value.trim(), email: els.profileEmail.value.trim(), school: els.profileSchool.value.trim(), course: els.profileCourse.value.trim(), department: els.profileDepartment.value.trim(), level: els.profileLevel.value.trim(), bio: els.profileBio.value.trim() }; saveState(); renderProfile(); showToast("Student profile saved."); }
     function resizeProfilePhoto(file) {
         return new Promise((resolve, reject) => { const reader = new FileReader(); reader.onerror = () => reject(new Error("Could not read image")); reader.onload = () => { const image = new Image(); image.onerror = () => reject(new Error("Invalid image")); image.onload = () => { const max = 640, scale = Math.min(1, max / Math.max(image.width, image.height)); const canvas = document.createElement("canvas"); canvas.width = Math.round(image.width * scale); canvas.height = Math.round(image.height * scale); const ctx = canvas.getContext("2d"); ctx.drawImage(image, 0, 0, canvas.width, canvas.height); resolve(canvas.toDataURL("image/jpeg", .86)); }; image.src = reader.result; }; reader.readAsDataURL(file); });
     }
