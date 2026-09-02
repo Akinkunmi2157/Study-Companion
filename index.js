@@ -1739,12 +1739,13 @@
             return;
         }
 
-        els.tutorChatMessages.innerHTML = tutorChat.history.map(msg => `
-            <div class="tutor-msg ${msg.role === "user" ? "user" : "assistant"}">
-                ${msg.attachmentName ? `<div class="tutor-msg-attachment">📎 ${escapeHtml(msg.attachmentName)}</div>` : ""}
-                ${msg.role === "assistant" ? renderMarkdown(msg.text) : escapeHtml(msg.text)}
-            </div>
-        `).join("");
+        els.tutorChatMessages.innerHTML = tutorChat.history.map(msg => {
+            const attachment = msg.attachmentName
+                ? `<div class="tutor-msg-attachment">📎 ${escapeHtml(msg.attachmentName)}</div>`
+                : "";
+            const body = msg.role === "assistant" ? renderMarkdown(msg.text) : escapeHtml(msg.text);
+            return `<div class="tutor-msg ${msg.role === "user" ? "user" : "assistant"}">${attachment}${body}</div>`;
+        }).join("");
         els.tutorChatMessages.scrollTop = els.tutorChatMessages.scrollHeight;
     }
 
