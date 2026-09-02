@@ -905,12 +905,57 @@
         return result;
     }
 
+    const TOAST_LIFETIME_MS = 3600;
+    const MAX_VISIBLE_TOASTS = 3;
+
     function showToast(message, type = "success") {
+        const container = els.toastContainer;
+
+        // Rapid, repeated actions (e.g. clicking through task statuses
+        // quickly) can fire the same message back to back — refresh the
+        // existing bubble's timer instead of stacking a duplicate on top.
+        const existing = [...container.children].find(
+            toast => toast.dataset.message === message && toast.dataset.type === type
+        );
+        if (existing) {
+            clearTimeout(Number(existing.dataset.timeoutId));
+            existing.dataset.timeoutId = scheduleToastRemoval(existing);
+            return;
+        }
+
+        // Cap concurrent toasts so a burst of actions can't pile the
+        // container up indefinitely. Work from a static snapshot and
+        // remove overflow immediately (no fade) — `container.children` is
+        // a live list, so looping on it directly while removal is
+        // animated (async) would never shrink and could loop forever.
+        const current = [...container.children];
+        while (current.length >= MAX_VISIBLE_TOASTS) {
+            const oldest = current.shift();
+            clearTimeout(Number(oldest.dataset.timeoutId));
+            oldest.remove();
+        }
+
         const toast = document.createElement("div");
         toast.className = `toast ${type}`;
         toast.textContent = message;
-        els.toastContainer.appendChild(toast);
-        setTimeout(() => toast.remove(), 3600);
+        toast.dataset.message = message;
+        toast.dataset.type = type;
+        container.appendChild(toast);
+        toast.dataset.timeoutId = scheduleToastRemoval(toast);
+    }
+
+    function scheduleToastRemoval(toast) {
+        return setTimeout(() => removeToast(toast), TOAST_LIFETIME_MS);
+    }
+
+    function removeToast(toast) {
+        if (!toast || toast.dataset.removing) return;
+        toast.dataset.removing = "true";
+        clearTimeout(Number(toast.dataset.timeoutId));
+        toast.classList.add("toast--out");
+        toast.addEventListener("animationend", () => toast.remove(), { once: true });
+        // Fallback in case the animation event doesn't fire for any reason.
+        setTimeout(() => toast.remove(), 300);
     }
 
     function openModal(modal) {
@@ -1166,7 +1211,12 @@
             .map(task => `
         <article class="task-card">
           <div class="task-card__top">
-            <span class="priority-badge priority-${task.priority}">${task.priority}</span>
+            <div class="task-card__badges">
+              <span class="priority-badge priority-${task.priority}">${task.priority}</span>
+              ${status === "done" && task.unverifiedCompletion
+                  ? `<span class="unverified-badge" title="Marked complete without a logged study session">Unverified</span>`
+                  : ""}
+            </div>
             <button class="task-menu-button" data-edit-task="${task.id}" title="Edit task">✎</button>
           </div>
           <h4>${escapeHtml(task.title)}</h4>
@@ -1249,9 +1299,34 @@
         showToast("Task deleted.", "warning");
     }
 
+    // Minutes of logged, timer-backed study sessions linked to a task
+    // before we treat "Complete" as trustworthy rather than a bare click.
+    const MIN_VERIFIED_MINUTES_FOR_COMPLETION = 1;
+
+    function getLoggedMinutesForTask(taskId) {
+        return state.sessions
+            .filter(session => session.taskId === taskId)
+            .reduce((sum, session) => sum + session.durationMinutes, 0);
+    }
+
     function moveTask(id, nextStatus) {
         const task = state.tasks.find(item => item.id === id);
         if (!task) return;
+
+        if (nextStatus === "done" && task.status !== "done") {
+            const loggedMinutes = getLoggedMinutesForTask(task.id);
+            if (loggedMinutes < MIN_VERIFIED_MINUTES_FOR_COMPLETION) {
+                const proceed = window.confirm(
+                    "No study session is logged against this task yet. Mark it complete anyway? " +
+                    "(This will be flagged as an unverified completion.)"
+                );
+                if (!proceed) return;
+                task.unverifiedCompletion = true;
+            } else {
+                task.unverifiedCompletion = false;
+            }
+        }
+
         task.status = nextStatus;
         saveState();
         renderTasks();
