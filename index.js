@@ -179,7 +179,8 @@
         automaticallyPausedByBlur: false,
         reflectionResourceKeywords: null,
         pendingAssessment: null,
-        activeResourceId: null
+        activeResourceId: null,
+        integrityLocked: false
     };
 
     // In-memory AI tutor chat session. Not persisted — a fresh chat starts
@@ -358,6 +359,9 @@
         reflectionAlignment: document.getElementById("reflectionAlignment"),
         saveReflection: document.getElementById("saveReflection"),
         discardSession: document.getElementById("discardSession"),
+        reflectionIntegrityLock: document.getElementById("reflectionIntegrityLock"),
+        reflectionIntegrityLockMessage: document.getElementById("reflectionIntegrityLockMessage"),
+        resumeReflectionIntegrity: document.getElementById("resumeReflectionIntegrity"),
 
         reflectionViewModal: document.getElementById("reflectionViewModal"),
         reflectionViewTitle: document.getElementById("reflectionViewTitle"),
@@ -369,6 +373,9 @@
         objectiveQuestions: document.getElementById("objectiveQuestions"),
         assessmentValidation: document.getElementById("assessmentValidation"),
         backToReflection: document.getElementById("backToReflection"),
+        assessmentIntegrityLock: document.getElementById("assessmentIntegrityLock"),
+        assessmentIntegrityLockMessage: document.getElementById("assessmentIntegrityLockMessage"),
+        resumeAssessmentIntegrity: document.getElementById("resumeAssessmentIntegrity"),
 
         toastContainer: document.getElementById("toastContainer")
     };
@@ -1214,8 +1221,8 @@
             <div class="task-card__badges">
               <span class="priority-badge priority-${task.priority}">${task.priority}</span>
               ${status === "done" && task.unverifiedCompletion
-                  ? `<span class="unverified-badge" title="Marked complete without a logged study session">Unverified</span>`
-                  : ""}
+                    ? `<span class="unverified-badge" title="Marked complete without a logged study session">Unverified</span>`
+                    : ""}
             </div>
             <button class="task-menu-button" data-edit-task="${task.id}" title="Edit task">✎</button>
           </div>
@@ -1434,8 +1441,22 @@
         timer.checksFailed = 0;
         timer.nextVerificationAt = null;
         closeModal(els.verificationModal);
+        clearIntegrityLock();
         updateTimerUI();
         showToast("Timer reset.", "warning");
+    }
+
+    // Hides both lock overlays and re-enables the controls behind them,
+    // without the "resume" toast/fullscreen-request side effects — used
+    // whenever a session ends outright (reset/discard/logged) so a lock
+    // never lingers into the next session.
+    function clearIntegrityLock() {
+        timer.integrityLocked = false;
+        [els.reflectionIntegrityLock, els.assessmentIntegrityLock].forEach(overlay => overlay.classList.add("hidden"));
+        els.discardSession.disabled = false;
+        els.assessmentForm.querySelectorAll("input, button").forEach(control => { control.disabled = false; });
+        els.backToReflection.disabled = false;
+        els.reflectionText.disabled = false;
     }
 
     function skipTimer() {
@@ -3224,13 +3245,103 @@ Rules for the assessment questions (these test comprehension of the material its
         updateTimerUI();
     }
 
-    function handleVisibilityChange() {
-        if (
-            document.hidden &&
-            timer.running &&
+    // -------------------------------------------------------------
+    // Session integrity monitoring
+    //
+    // A session isn't just "the countdown is ticking" — it also covers
+    // the summary/reflection and comprehension-assessment steps that
+    // follow a completed focus session, since those are exactly where a
+    // student could otherwise tab away, split-screen, or hand the
+    // question off to someone else. isSessionIntegrityActive() is true
+    // for that whole window: while the focus timer is running, AND while
+    // timer.pendingCompletion exists (i.e. the reflection or assessment
+    // modal is still open for a just-finished focus session).
+    // -------------------------------------------------------------
+    function isSessionIntegrityActive() {
+        return Boolean(
+            state.settings.focusTracking &&
             timer.mode === "focus" &&
-            state.settings.focusTracking
-        ) {
+            (timer.running || timer.pendingCompletion)
+        );
+    }
+
+    // While the countdown is running, a violation increments the live
+    // timer.focusViolations counter (as before). Once the timer has
+    // completed and the student is in the reflection/assessment steps,
+    // that counter has already been copied onto timer.pendingCompletion,
+    // so violations during that phase are recorded there instead —
+    // that's the object that ultimately decides the session's
+    // "verified" vs "flagged" integrity status when it's logged.
+    function recordFocusViolation() {
+        if (timer.pendingCompletion) {
+            timer.pendingCompletion.focusViolations = (timer.pendingCompletion.focusViolations || 0) + 1;
+        } else {
+            timer.focusViolations += 1;
+        }
+        updateTimerUI();
+    }
+
+    // Which reflection/assessment modal (if either) is currently open,
+    // so the lock overlay is shown in the right place.
+    function getOpenIntegrityModalEls() {
+        if (!els.reflectionModal.classList.contains("hidden")) {
+            return { overlay: els.reflectionIntegrityLock, message: els.reflectionIntegrityLockMessage };
+        }
+        if (!els.assessmentModal.classList.contains("hidden")) {
+            return { overlay: els.assessmentIntegrityLock, message: els.assessmentIntegrityLockMessage };
+        }
+        return null;
+    }
+
+    const INTEGRITY_LOCK_REASONS = {
+        "tab-hidden": "You left the study tab while completing your session summary.",
+        "window-blur": "This window lost focus — this can happen when another window is snapped alongside it (split screen) or during screen sharing.",
+        "fullscreen-exit": "You exited full screen — this can happen when sharing your screen or splitting the view."
+    };
+
+    // There's no countdown to "pause" once the timer has already
+    // finished, so leaving the tab / splitting the screen / exiting
+    // fullscreen during reflection or assessment instead locks that
+    // modal: the violation is recorded immediately, and every control
+    // in it is disabled behind an overlay until the student explicitly
+    // confirms they're back.
+    function triggerIntegrityLock(reasonKey) {
+        if (timer.integrityLocked) return;
+
+        const target = getOpenIntegrityModalEls();
+        if (!target) return;
+
+        recordFocusViolation();
+        timer.integrityLocked = true;
+
+        target.message.textContent = INTEGRITY_LOCK_REASONS[reasonKey] || "This session was flagged for leaving the study view.";
+        target.overlay.classList.remove("hidden");
+
+        els.reflectionText.disabled = true;
+        els.saveReflection.disabled = true;
+        els.discardSession.disabled = true;
+        els.assessmentForm.querySelectorAll("input, button").forEach(control => { control.disabled = true; });
+        els.backToReflection.disabled = true;
+
+        showToast("Session flagged — you left the study view during your summary.", "error");
+    }
+
+    function resumeFromIntegrityLock() {
+        if (!timer.integrityLocked) return;
+        clearIntegrityLock();
+        validateReflection(); // restores saveReflection's disabled state based on content, rather than force-enabling it
+
+        // Re-requesting fullscreen needs a user gesture — this click
+        // provides it — but only bother if the session actually uses it.
+        if (state.settings.focusTracking && document.documentElement.requestFullscreen && !document.fullscreenElement) {
+            document.documentElement.requestFullscreen().catch(() => { });
+        }
+
+        showToast("Welcome back. This violation was recorded and the session will be flagged.", "warning");
+    }
+
+    function handleVisibilityChange() {
+        if (document.hidden && isSessionIntegrityActive()) {
             // The student is inside the Study Companion's own resource
             // viewer, not a different tab/app. This is the "internal
             // navigation" case the integrity system is meant to recognise
@@ -3240,10 +3351,13 @@ Rules for the assessment questions (these test comprehension of the material its
             // behaves exactly as before.
             if (isResourceViewerOpen()) return;
 
-            timer.focusViolations += 1;
-            timer.automaticallyPausedByBlur = true;
-            pauseTimer("Paused: tab hidden");
-            updateTimerUI();
+            if (timer.running) {
+                recordFocusViolation();
+                timer.automaticallyPausedByBlur = true;
+                pauseTimer("Paused: tab hidden");
+            } else {
+                triggerIntegrityLock("tab-hidden");
+            }
         } else if (
             !document.hidden &&
             timer.automaticallyPausedByBlur &&
@@ -3260,45 +3374,41 @@ Rules for the assessment questions (these test comprehension of the material its
     }
 
     function handleWindowBlur() {
-        if (
-            timer.running &&
-            timer.mode === "focus" &&
-            state.settings.focusTracking &&
-            !document.hidden
-        ) {
-            // Same reasoning as handleVisibilityChange(): opening the
-            // in-app resource viewer must not register as the window
-            // losing focus to something outside the Study Companion.
-            if (isResourceViewerOpen()) return;
+        if (!isSessionIntegrityActive() || document.hidden) return;
 
-            timer.focusViolations += 1;
+        // Same reasoning as handleVisibilityChange(): opening the
+        // in-app resource viewer must not register as the window
+        // losing focus to something outside the Study Companion.
+        if (isResourceViewerOpen()) return;
+
+        if (timer.running) {
+            recordFocusViolation();
             timer.automaticallyPausedByBlur = true;
             pauseTimer("Paused: window lost focus");
-            updateTimerUI();
             showToast("The focus timer was paused because this window lost focus — this can happen when another window is snapped alongside it.", "warning");
+        } else {
+            triggerIntegrityLock("window-blur");
         }
     }
 
     function handleFullscreenChange() {
-        if (
-            !document.fullscreenElement &&
-            timer.running &&
-            timer.mode === "focus" &&
-            state.settings.focusTracking
-        ) {
-            // The resource viewer never requests the browser Fullscreen
-            // API (see toggleWorkspaceFullscreen() above), so this
-            // listener still only ever fires for the study session's own
-            // fullscreen mode exiting. The isResourceViewerOpen() guard is
-            // kept here too for defence-in-depth, in case a future viewer
-            // type legitimately needs real fullscreen.
-            if (isResourceViewerOpen()) return;
+        if (document.fullscreenElement || !isSessionIntegrityActive()) return;
 
-            timer.focusViolations += 1;
+        // The resource viewer never requests the browser Fullscreen
+        // API (see toggleWorkspaceFullscreen() above), so this
+        // listener still only ever fires for the study session's own
+        // fullscreen mode exiting. The isResourceViewerOpen() guard is
+        // kept here too for defence-in-depth, in case a future viewer
+        // type legitimately needs real fullscreen.
+        if (isResourceViewerOpen()) return;
+
+        if (timer.running) {
+            recordFocusViolation();
             timer.automaticallyPausedByBlur = true;
             pauseTimer("Paused: left fullscreen");
-            updateTimerUI();
             showToast("The focus timer was paused because you exited fullscreen — this can happen when sharing your screen or splitting the view.", "warning");
+        } else {
+            triggerIntegrityLock("fullscreen-exit");
         }
     }
 
