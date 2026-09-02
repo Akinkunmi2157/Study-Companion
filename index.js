@@ -1833,11 +1833,29 @@
         if (removeButton) removeButton.addEventListener("click", clearTutorAttachment);
     }
 
+    // Cleans up a student's typed message before it's displayed or sent to
+    // the AI. The chat bubble uses `white-space: pre-wrap` so the AI's own
+    // paragraph breaks render correctly — but that same rule means any
+    // stray whitespace in the STUDENT's message (extra spaces or line
+    // breaks slipped in by autocorrect, swipe-typing, or an accidental
+    // Shift+Enter) gets rendered exactly as typed, producing a jagged,
+    // unevenly-indented bubble. This collapses runs of spaces/tabs to a
+    // single space and trims each line, while still respecting a
+    // genuinely multi-line message the student wrote on purpose.
+    function normaliseUserMessage(text) {
+        return String(text || "")
+            .split("\n")
+            .map(line => line.replace(/[ \t]+/g, " ").trim())
+            .filter((line, index, lines) => line || (index > 0 && index < lines.length - 1))
+            .join("\n")
+            .trim();
+    }
+
     async function sendTutorChatMessage(event) {
         event.preventDefault();
         if (tutorChat.sending) return;
 
-        const question = els.tutorChatInput.value.trim();
+        const question = normaliseUserMessage(els.tutorChatInput.value);
         const attachment = tutorChat.attachment;
         if (!question && !attachment) return;
 
