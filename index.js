@@ -2798,18 +2798,30 @@ Rules for the assessment questions (these test comprehension of the material its
             const progress = resource.readProgress;
             let progressHtml = "";
             let pct = null;
+            let isComplete = false;
             if (progress?.kind === "pdf" && progress.totalPages) {
                 pct = Math.round((progress.maxPage / progress.totalPages) * 100);
-                progressHtml = `<div class="resource-progress"><span style="width:${pct}%"></span></div><small class="resource-progress-label">${pct}% read · furthest page ${progress.maxPage} of ${progress.totalPages}</small>`;
+                isComplete = progress.maxPage >= progress.totalPages;
+                const label = isComplete
+                    ? `✓ Finished · read all ${progress.totalPages} pages`
+                    : `${pct}% read · furthest page ${progress.maxPage} of ${progress.totalPages}`;
+                progressHtml = `<div class="resource-progress${isComplete ? " is-complete" : ""}"><span style="width:${pct}%"></span></div><small class="resource-progress-label">${label}</small>`;
             } else if ((progress?.kind === "docx" || progress?.kind === "text") && typeof progress.maxPercent === "number") {
                 pct = Math.round(progress.maxPercent * 100);
-                progressHtml = `<div class="resource-progress"><span style="width:${pct}%"></span></div><small class="resource-progress-label">${pct}% read</small>`;
+                isComplete = progress.maxPercent >= 0.999;
+                const label = isComplete ? "✓ Finished reading" : `${pct}% read`;
+                progressHtml = `<div class="resource-progress${isComplete ? " is-complete" : ""}"><span style="width:${pct}%"></span></div><small class="resource-progress-label">${label}</small>`;
             }
+            // Button copy should reflect actual state: nothing started,
+            // partway through, or already finished — "Continue studying"
+            // on a fully-read resource reads like the app didn't notice
+            // you were done.
+            const actionLabel = pct === null ? "Open & study" : isComplete ? "Review again" : "Continue studying";
             return `
       <article class="resource-card">
         <div class="resource-card__icon">${resourceIcon(resource)}</div>
         <div class="resource-card__content"><span class="resource-type">${resource.type}</span><h3>${escapeHtml(resource.title)}</h3><p>${escapeHtml(resource.notes || resource.fileName || "Ready to study")}</p><small>${resource.fileName ? humanFileSize(resource.fileSize) : "External link"}</small>${progressHtml}</div>
-        <div class="resource-card__actions"><button class="primary-button" data-open-resource="${resource.id}">${pct ? "Continue studying" : "Open & study"}</button><button class="secondary-button" data-plan-resource="${resource.id}">Plan task</button><button class="danger-text-button" data-delete-resource="${resource.id}">Delete</button></div>
+        <div class="resource-card__actions"><button class="primary-button" data-open-resource="${resource.id}">${actionLabel}</button><button class="secondary-button" data-plan-resource="${resource.id}">Plan task</button><button class="danger-text-button" data-delete-resource="${resource.id}">Delete</button></div>
       </article>`;
         }).join("") : `<div class="empty-state resource-empty">No resources yet. Upload a document, video, or add a learning link.</div>`;
         populateTaskResources();
@@ -3104,7 +3116,10 @@ Rules for the assessment questions (these test comprehension of the material its
                 const maxScroll = container.scrollHeight - container.clientHeight;
                 if (maxScroll > 0) container.scrollTop = maxScroll * saved.scrollPercent;
             });
-            showToast(`Resuming "${resource.title}" from where you left off.`);
+            const isFinished = (saved.maxPercent || 0) >= 0.999;
+            showToast(isFinished
+                ? `You've already finished reading "${resource.title}". Reopening where you left off.`
+                : `Resuming "${resource.title}" from where you left off.`);
         }
 
         let persistTimeoutId = null;
@@ -3276,7 +3291,10 @@ Rules for the assessment questions (these test comprehension of the material its
         await renderPage();
 
         if (startPage > 1) {
-            showToast(`Resuming "${resource.title}" from page ${startPage}.`);
+            const isFinished = (savedProgress?.maxPage || 0) >= pdf.numPages;
+            showToast(isFinished
+                ? `You've already read all ${pdf.numPages} pages of "${resource.title}". Reopening at page ${startPage}.`
+                : `Resuming "${resource.title}" from page ${startPage}.`);
         }
 
         activeViewerCleanup = () => {
