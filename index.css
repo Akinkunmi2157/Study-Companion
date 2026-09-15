@@ -1843,6 +1843,10 @@ textarea.form-control {
     transition: width 0.25s ease;
 }
 
+.resource-progress.is-complete span {
+    background: var(--success);
+}
+
 .resource-progress-label {
     display: block;
     margin-top: 6px;
