@@ -1740,8 +1740,17 @@
             if (resource.mimeType === "application/pdf" && window.pdfjsLib) {
                 const bytes = new Uint8Array(await file.arrayBuffer());
                 const pdf = await window.pdfjsLib.getDocument({ data: bytes }).promise;
+                // Only pull text from pages the student has actually
+                // reached (resource.readProgress.maxPage), so a long PDF
+                // doesn't get quizzed on chapters they haven't opened yet.
+                // If we have no reading-progress data at all (never opened
+                // in the viewer), fall back to the old "first 30 pages"
+                // behaviour rather than returning nothing.
+                const progress = resource.readProgress?.kind === "pdf" ? resource.readProgress : null;
+                const pageLimit = progress?.maxPage
+                    ? Math.min(pdf.numPages, progress.maxPage, 60)
+                    : Math.min(pdf.numPages, 30);
                 const pages = [];
-                const pageLimit = Math.min(pdf.numPages, 30);
                 for (let pageNumber = 1; pageNumber <= pageLimit; pageNumber += 1) {
                     const page = await pdf.getPage(pageNumber);
                     const content = await page.getTextContent();
@@ -1753,14 +1762,24 @@
             if (isDocxResource(resource) && window.mammoth) {
                 const arrayBuffer = await file.arrayBuffer();
                 const result = await window.mammoth.extractRawText({ arrayBuffer });
-                return `${metadata}\n\n${result.value}`.slice(0, 60000);
+                const progress = resource.readProgress?.kind === "docx" ? resource.readProgress : null;
+                const fullText = result.value;
+                const limitedText = progress?.maxPercent
+                    ? fullText.slice(0, Math.max(500, Math.floor(fullText.length * progress.maxPercent)))
+                    : fullText;
+                return `${metadata}\n\n${limitedText}`.slice(0, 60000);
             }
 
             if (
                 resource.mimeType.startsWith("text/") ||
                 /\.(txt|md|csv|json|html?|js|ts|css|py|java|c|cpp|sql)$/i.test(resource.fileName || "")
             ) {
-                return `${metadata}\n\n${await file.text()}`.slice(0, 60000);
+                const fullText = await file.text();
+                const progress = resource.readProgress?.kind === "text" ? resource.readProgress : null;
+                const limitedText = progress?.maxPercent
+                    ? fullText.slice(0, Math.max(500, Math.floor(fullText.length * progress.maxPercent)))
+                    : fullText;
+                return `${metadata}\n\n${limitedText}`.slice(0, 60000);
             }
         } catch (error) {
             console.warn("Could not extract resource text.", error);
@@ -2019,13 +2038,31 @@
         }
     }
 
-    function normaliseAssessment(payload) {
+    // How many objective questions to ask for a given slice of resource
+    // text. A flat "5 questions" regardless of how much material the
+    // student actually covered felt thin for a real chapter and padded
+    // for a short note — this scales with the reading actually done
+    // (see computeQuestionCount()'s caller), bounded to a sensible range.
+    const MIN_ASSESSMENT_QUESTIONS = 6;
+    const MAX_ASSESSMENT_QUESTIONS = 14;
+
+    function computeQuestionCount(resourceText) {
+        const wordCount = String(resourceText || "")
+            .trim()
+            .split(/\s+/)
+            .filter(Boolean).length;
+        // Roughly one question per ~120 words of material actually read.
+        const scaled = Math.round(wordCount / 120);
+        return Math.max(MIN_ASSESSMENT_QUESTIONS, Math.min(MAX_ASSESSMENT_QUESTIONS, scaled || MIN_ASSESSMENT_QUESTIONS));
+    }
+
+    function normaliseAssessment(payload, expectedCount = MIN_ASSESSMENT_QUESTIONS) {
         const objective = Array.isArray(payload?.objectiveQuestions) ? payload.objectiveQuestions : [];
         return {
             aligned: payload?.aligned === true,
             alignmentScore: Math.max(0, Math.min(100, Number(payload?.alignmentScore) || 0)),
             feedback: String(payload?.feedback || ""),
-            objectiveQuestions: objective.slice(0, 5).map((item, index) => ({
+            objectiveQuestions: objective.slice(0, expectedCount).map((item, index) => ({
                 question: String(item?.question || `Question ${index + 1}`),
                 options: Array.isArray(item?.options) ? item.options.slice(0, 4).map(String) : [],
                 correctAnswer: Math.max(0, Math.min(3, Number(item?.correctAnswer) || 0)),
@@ -2035,15 +2072,22 @@
     }
 
     async function verifySummaryAndGenerateAssessment(summary, resource, task) {
+        // extractResourceStudyText() already limits itself to the portion
+        // of the resource the student has actually reached (see its PDF
+        // page-limit / docx-and-text percent-limit logic below), so the
+        // quiz — like the alignment check — only ever covers material
+        // they've genuinely read, not the whole document dumped at once.
         const resourceText = await extractResourceStudyText(resource);
         if (!resourceText || resourceText.trim().length < 30) {
             throw new Error("There is not enough readable resource content to verify the summary. Add detailed resource notes or upload a readable PDF/text file.");
         }
 
+        const questionCount = computeQuestionCount(resourceText);
+
         const prompt = `You are assessing whether a student's study summary demonstrates genuine understanding of the subject matter they studied. The resource below tells you what topic/course area they were studying — use it as context for the subject, not as a script the student must repeat.
 
 RESOURCE TITLE: ${resource?.title || task?.title || "Study resource"}
-RESOURCE CONTENT (context on the topic being studied):\n${resourceText}
+RESOURCE CONTENT (context on the topic being studied — this reflects only what the student has read so far, not necessarily the full document):\n${resourceText}
 
 STUDENT SUMMARY:\n${summary}
 
@@ -2065,14 +2109,15 @@ Rules for judging "aligned" (this is the important part):
 - alignmentScore (0-100) should reflect depth of topical understanding, not textual similarity to the resource. Require at least 60 for aligned=true.
 
 Rules for the assessment questions (these test comprehension of the material itself, separately from the alignment judgment above):
-- Generate exactly 5 objective multiple-choice questions with exactly 4 options each, drawn from the resource content.
+- Generate exactly ${questionCount} objective multiple-choice questions with exactly 4 options each, drawn ONLY from the resource content provided above (the portion the student has read so far). Do not write questions about content that isn't included in that text.
+- Spread the questions across the full span of the provided content rather than clustering them all near the start.
 - correctAnswer must be the zero-based index of the correct option.
 - Include a brief "explanation" for each question so the student can review why the correct answer is correct.`;
 
         const response = await askGemini(prompt, { mode: "assessment" });
         if (!response) throw new Error("The resource check could not be completed.");
-        const assessment = normaliseAssessment(parseJsonObjectFromAi(response));
-        if (assessment.objectiveQuestions.length !== 5 || assessment.objectiveQuestions.some(q => q.options.length !== 4)) {
+        const assessment = normaliseAssessment(parseJsonObjectFromAi(response), questionCount);
+        if (assessment.objectiveQuestions.length !== questionCount || assessment.objectiveQuestions.some(q => q.options.length !== 4)) {
             throw new Error("The generated assessment was incomplete. Please try again.");
         }
         return assessment;
@@ -2081,6 +2126,11 @@ Rules for the assessment questions (these test comprehension of the material its
     function renderAssessment(assessment) {
         els.assessmentSummaryStatus.className = `assessment-summary-status ${assessment.aligned ? "match" : "mismatch"}`;
         els.assessmentSummaryStatus.innerHTML = `<strong>${assessment.aligned ? "Summary confirmed" : "Summary needs correction"} — ${assessment.alignmentScore}% alignment</strong><p>${escapeHtml(assessment.feedback)}</p>`;
+
+        const countNote = document.getElementById("assessmentQuestionCountNote");
+        if (countNote) {
+            countNote.textContent = `Answer ${assessment.objectiveQuestions.length} objective questions, generated from the material you've read so far.`;
+        }
 
         els.objectiveQuestions.innerHTML = assessment.objectiveQuestions.map((item, index) => `
             <fieldset class="assessment-question">
@@ -2236,7 +2286,7 @@ Rules for the assessment questions (these test comprehension of the material its
         });
 
         if (objectiveAnswers.some(answer => answer === null)) {
-            els.assessmentValidation.textContent = "Answer all 5 questions before submitting.";
+            els.assessmentValidation.textContent = `Answer all ${assessment.objectiveQuestions.length} questions before submitting.`;
             return;
         }
 
@@ -2744,12 +2794,24 @@ Rules for the assessment questions (these test comprehension of the material its
         els.documentCount.textContent = state.resources.filter(r => r.type === "document").length;
         els.videoCount.textContent = state.resources.filter(r => r.type === "video").length;
         els.linkCount.textContent = state.resources.filter(r => r.type === "link").length;
-        els.resourceGrid.innerHTML = resources.length ? resources.map(resource => `
+        els.resourceGrid.innerHTML = resources.length ? resources.map(resource => {
+            const progress = resource.readProgress;
+            let progressHtml = "";
+            let pct = null;
+            if (progress?.kind === "pdf" && progress.totalPages) {
+                pct = Math.round((progress.maxPage / progress.totalPages) * 100);
+                progressHtml = `<div class="resource-progress"><span style="width:${pct}%"></span></div><small class="resource-progress-label">${pct}% read · furthest page ${progress.maxPage} of ${progress.totalPages}</small>`;
+            } else if ((progress?.kind === "docx" || progress?.kind === "text") && typeof progress.maxPercent === "number") {
+                pct = Math.round(progress.maxPercent * 100);
+                progressHtml = `<div class="resource-progress"><span style="width:${pct}%"></span></div><small class="resource-progress-label">${pct}% read</small>`;
+            }
+            return `
       <article class="resource-card">
         <div class="resource-card__icon">${resourceIcon(resource)}</div>
-        <div class="resource-card__content"><span class="resource-type">${resource.type}</span><h3>${escapeHtml(resource.title)}</h3><p>${escapeHtml(resource.notes || resource.fileName || "Ready to study")}</p><small>${resource.fileName ? humanFileSize(resource.fileSize) : "External link"}</small></div>
-        <div class="resource-card__actions"><button class="primary-button" data-open-resource="${resource.id}">Open & study</button><button class="secondary-button" data-plan-resource="${resource.id}">Plan task</button><button class="danger-text-button" data-delete-resource="${resource.id}">Delete</button></div>
-      </article>`).join("") : `<div class="empty-state resource-empty">No resources yet. Upload a document, video, or add a learning link.</div>`;
+        <div class="resource-card__content"><span class="resource-type">${resource.type}</span><h3>${escapeHtml(resource.title)}</h3><p>${escapeHtml(resource.notes || resource.fileName || "Ready to study")}</p><small>${resource.fileName ? humanFileSize(resource.fileSize) : "External link"}</small>${progressHtml}</div>
+        <div class="resource-card__actions"><button class="primary-button" data-open-resource="${resource.id}">${pct ? "Continue studying" : "Open & study"}</button><button class="secondary-button" data-plan-resource="${resource.id}">Plan task</button><button class="danger-text-button" data-delete-resource="${resource.id}">Delete</button></div>
+      </article>`;
+        }).join("") : `<div class="empty-state resource-empty">No resources yet. Upload a document, video, or add a learning link.</div>`;
         populateTaskResources();
     }
 
@@ -3026,9 +3088,47 @@ Rules for the assessment questions (these test comprehension of the material its
             </div>`;
     }
 
+    // Shared reading-progress tracker for scroll-based (non-paginated)
+    // viewers (docx, plain text). PDFs track progress by page number
+    // instead (see renderPdfViewer above) — this covers the rest.
+    // Records both the current scroll position (to restore exactly where
+    // the student stopped) and the furthest-ever percentage reached (used
+    // to limit how much of the document the quiz is allowed to draw
+    // from), the same way resource.readProgress.maxPage works for PDFs.
+    function attachScrollProgressTracking(resource, container, kind) {
+        if (!container) return;
+
+        const saved = resource.readProgress?.kind === kind ? resource.readProgress : null;
+        if (saved && saved.scrollPercent > 0) {
+            requestAnimationFrame(() => {
+                const maxScroll = container.scrollHeight - container.clientHeight;
+                if (maxScroll > 0) container.scrollTop = maxScroll * saved.scrollPercent;
+            });
+            showToast(`Resuming "${resource.title}" from where you left off.`);
+        }
+
+        let persistTimeoutId = null;
+        function onScroll() {
+            const maxScroll = container.scrollHeight - container.clientHeight;
+            const percent = maxScroll > 0 ? Math.min(1, container.scrollTop / maxScroll) : 1;
+            const maxPercent = Math.max(percent, resource.readProgress?.maxPercent || 0);
+            resource.readProgress = { kind, scrollPercent: percent, maxPercent, updatedAt: Date.now() };
+            if (persistTimeoutId) clearTimeout(persistTimeoutId);
+            persistTimeoutId = setTimeout(saveState, 600);
+        }
+
+        container.addEventListener("scroll", onScroll, { passive: true });
+
+        activeViewerCleanup = () => {
+            container.removeEventListener("scroll", onScroll);
+            if (persistTimeoutId) clearTimeout(persistTimeoutId);
+        };
+    }
+
     async function renderTextViewer(resource, file) {
         const text = await file.text();
-        els.workspaceViewer.innerHTML = `<pre class="text-viewer">${escapeHtml(text)}</pre>`;
+        els.workspaceViewer.innerHTML = `<pre class="text-viewer" id="textViewerContent">${escapeHtml(text)}</pre>`;
+        attachScrollProgressTracking(resource, document.getElementById("textViewerContent"), "text");
     }
 
     // Word documents (.docx): converted client-side to HTML with mammoth.js
@@ -3045,7 +3145,8 @@ Rules for the assessment questions (these test comprehension of the material its
         }
         const arrayBuffer = await file.arrayBuffer();
         const result = await window.mammoth.convertToHtml({ arrayBuffer });
-        els.workspaceViewer.innerHTML = `<div class="docx-viewer">${result.value}</div>`;
+        els.workspaceViewer.innerHTML = `<div class="docx-viewer" id="docxViewerContent">${result.value}</div>`;
+        attachScrollProgressTracking(resource, document.getElementById("docxViewerContent"), "docx");
     }
 
     // Unsupported file types never redirect automatically. The student
@@ -3086,6 +3187,15 @@ Rules for the assessment questions (these test comprehension of the material its
         const bytes = new Uint8Array(await file.arrayBuffer());
         const pdf = await window.pdfjsLib.getDocument({ data: bytes }).promise;
 
+        // Resume where the student left off, and remember the furthest
+        // page they've actually reached (not just the last page they
+        // happened to close on) — the assessment generator uses that
+        // furthest-page figure to only quiz on material already read.
+        const savedProgress = resource.readProgress?.kind === "pdf" ? resource.readProgress : null;
+        const startPage = savedProgress && savedProgress.lastPage >= 1 && savedProgress.lastPage <= pdf.numPages
+            ? savedProgress.lastPage
+            : 1;
+
         els.workspaceViewer.innerHTML = `
             <div class="pdf-viewer" id="pdfViewer">
                 <div class="viewer-toolbar pdf-toolbar">
@@ -3093,6 +3203,7 @@ Rules for the assessment questions (these test comprehension of the material its
                     <span id="pdfPageIndicator">Page 1 of ${pdf.numPages}</span>
                     <button type="button" class="icon-button" id="pdfNextPage" aria-label="Next page">›</button>
                     <span class="pdf-toolbar__spacer"></span>
+                    <span class="pdf-progress-label" id="pdfProgressLabel"></span>
                     <button type="button" class="icon-button" id="pdfZoomOut" aria-label="Zoom out">−</button>
                     <span id="pdfZoomLevel">100%</span>
                     <button type="button" class="icon-button" id="pdfZoomIn" aria-label="Zoom in">+</button>
@@ -3106,10 +3217,24 @@ Rules for the assessment questions (these test comprehension of the material its
         const scrollArea = document.getElementById("pdfCanvasScroll");
         const pageIndicator = document.getElementById("pdfPageIndicator");
         const zoomLevelLabel = document.getElementById("pdfZoomLevel");
-        let pageNumber = 1;
+        const progressLabel = document.getElementById("pdfProgressLabel");
+        let pageNumber = startPage;
         let zoom = 1;
         let renderTask = null;
         let destroyed = false;
+
+        function persistReadProgress() {
+            const maxPage = Math.max(pageNumber, resource.readProgress?.maxPage || 0);
+            resource.readProgress = {
+                kind: "pdf",
+                lastPage: pageNumber,
+                maxPage,
+                totalPages: pdf.numPages,
+                updatedAt: Date.now()
+            };
+            saveState();
+            if (progressLabel) progressLabel.textContent = `Furthest read: page ${maxPage} of ${pdf.numPages}`;
+        }
 
         async function renderPage() {
             if (destroyed) return;
@@ -3132,6 +3257,7 @@ Rules for the assessment questions (these test comprehension of the material its
 
             pageIndicator.textContent = `Page ${pageNumber} of ${pdf.numPages}`;
             zoomLevelLabel.textContent = `${Math.round(zoom * 100)}%`;
+            persistReadProgress();
         }
 
         document.getElementById("pdfPrevPage").addEventListener("click", () => {
@@ -3148,6 +3274,10 @@ Rules for the assessment questions (these test comprehension of the material its
         });
 
         await renderPage();
+
+        if (startPage > 1) {
+            showToast(`Resuming "${resource.title}" from page ${startPage}.`);
+        }
 
         activeViewerCleanup = () => {
             destroyed = true;
@@ -3224,28 +3354,58 @@ Rules for the assessment questions (these test comprehension of the material its
         updateTimerUI();
     }
 
-    function handleVisibilityChange() {
-        if (
-            document.hidden &&
-            timer.running &&
-            timer.mode === "focus" &&
-            state.settings.focusTracking
-        ) {
-            // The student is inside the Study Companion's own resource
-            // viewer, not a different tab/app. This is the "internal
-            // navigation" case the integrity system is meant to recognise
-            // — it does not flag a violation or pause the timer. This is
-            // the *only* condition suppressed; every other document.hidden
-            // trigger (real tab switch, minimizing, another app) still
-            // behaves exactly as before.
-            if (isResourceViewerOpen()) return;
+    // -------------------------------------------------------------
+    // INTEGRITY COVERAGE DURING REFLECTION & ASSESSMENT
+    //
+    // Focus-time integrity (pause + flag) only ever protected the timer
+    // itself. Once the timer hit 0, the student moved into the
+    // reflection/assessment modals with NO monitoring at all — they
+    // could freely tab away, split-screen a search engine or another
+    // AI, or otherwise get outside help writing the "in your own words"
+    // summary or answering the resource quiz, and the session would
+    // still be logged as "Verified". These two helpers extend the same
+    // detection (document.hidden / window blur / fullscreen exit) to
+    // that window, and mark the pending session as flagged instead of
+    // pausing something that isn't running.
+    // -------------------------------------------------------------
+    function isReflectionOrAssessmentOpen() {
+        return Boolean(
+            (els.reflectionModal && !els.reflectionModal.classList.contains("hidden")) ||
+            (els.assessmentModal && !els.assessmentModal.classList.contains("hidden"))
+        );
+    }
 
-            timer.focusViolations += 1;
-            timer.automaticallyPausedByBlur = true;
-            pauseTimer("Paused: tab hidden");
-            updateTimerUI();
+    function flagReflectionIntegrityBreach(reason) {
+        if (!timer.pendingCompletion) return;
+        timer.pendingCompletion.focusViolations = (timer.pendingCompletion.focusViolations || 0) + 1;
+        timer.pendingCompletion.checksFailed = (timer.pendingCompletion.checksFailed || 0) + 1;
+        showToast(`Integrity flag: you ${reason}. This session will be logged as flagged.`, "error");
+    }
+
+    function handleVisibilityChange() {
+        if (document.hidden) {
+            if (isReflectionOrAssessmentOpen()) {
+                flagReflectionIntegrityBreach("left the tab during your reflection or quiz");
+            } else if (
+                timer.running &&
+                timer.mode === "focus" &&
+                state.settings.focusTracking
+            ) {
+                // The student is inside the Study Companion's own resource
+                // viewer, not a different tab/app. This is the "internal
+                // navigation" case the integrity system is meant to
+                // recognise — it does not flag a violation or pause the
+                // timer. This is the *only* condition suppressed; every
+                // other document.hidden trigger (real tab switch,
+                // minimizing, another app) still behaves exactly as before.
+                if (!isResourceViewerOpen()) {
+                    timer.focusViolations += 1;
+                    timer.automaticallyPausedByBlur = true;
+                    pauseTimer("Paused: tab hidden");
+                    updateTimerUI();
+                }
+            }
         } else if (
-            !document.hidden &&
             timer.automaticallyPausedByBlur &&
             timer.mode === "focus"
         ) {
@@ -3260,11 +3420,22 @@ Rules for the assessment questions (these test comprehension of the material its
     }
 
     function handleWindowBlur() {
+        // Covers split-screen / snapped-window and app-switch cases: the
+        // tab stays visible (document.hidden stays false) but the window
+        // itself loses OS focus. This fires during the reflection/quiz
+        // modals too, since a student can split their screen with a
+        // search engine or another chat assistant open beside this tab.
+        if (document.hidden) return;
+
+        if (isReflectionOrAssessmentOpen()) {
+            flagReflectionIntegrityBreach("switched away or split your screen during your reflection or quiz");
+            return;
+        }
+
         if (
             timer.running &&
             timer.mode === "focus" &&
-            state.settings.focusTracking &&
-            !document.hidden
+            state.settings.focusTracking
         ) {
             // Same reasoning as handleVisibilityChange(): opening the
             // in-app resource viewer must not register as the window
@@ -3280,6 +3451,16 @@ Rules for the assessment questions (these test comprehension of the material its
     }
 
     function handleFullscreenChange() {
+        if (isReflectionOrAssessmentOpen()) {
+            // Exiting the focus session's fullscreen mode while writing
+            // the reflection/quiz can accompany switching to another app
+            // or starting a screen share — flag it defensively.
+            if (!document.fullscreenElement) {
+                flagReflectionIntegrityBreach("exited fullscreen during your reflection or quiz");
+            }
+            return;
+        }
+
         if (
             !document.fullscreenElement &&
             timer.running &&
