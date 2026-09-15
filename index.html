@@ -419,6 +419,7 @@
                                     <li><span>✓</span> Random presence checks may appear.</li>
                                     <li><span>✓</span> A reflection is required to log focus time.</li>
                                     <li><span>✓</span> Pasting is blocked in reflections.</li>
+                                    <li><span>✓</span> Leaving the tab or splitting your screen during the reflection or quiz is flagged too.</li>
                                 </ul>
                             </article>
                         </aside>
@@ -602,10 +603,10 @@
                                             maxlength="100" placeholder="What are you studying?" /></label>
                                 </div>
                                 <div class="two-column-fields">
-                                    <label>Department<input id="profileDepartment" class="form-control"
-                                            maxlength="100" placeholder="Example: Computer Science" /></label>
-                                    <label>Level / year<input id="profileLevel" class="form-control"
-                                            maxlength="40" placeholder="Example: 200 level" /></label>
+                                    <label>Department<input id="profileDepartment" class="form-control" maxlength="100"
+                                            placeholder="Example: Computer Science" /></label>
+                                    <label>Level / year<input id="profileLevel" class="form-control" maxlength="40"
+                                            placeholder="Example: 200 level" /></label>
                                 </div>
                                 <label class="field-label" for="profileBio">Study goal</label>
                                 <textarea id="profileBio" class="form-control" rows="4" maxlength="240"
@@ -848,8 +849,8 @@
                 </div>
             </div>
             <div class="assessment-summary-status" id="assessmentSummaryStatus"></div>
-            <p class="reflection-help">Answer 5 objective questions generated strictly from the
-                resource you studied.</p>
+            <p class="reflection-help" id="assessmentQuestionCountNote">Answer the objective questions generated strictly from the
+                material you've read so far.</p>
             <form id="assessmentForm">
                 <section class="assessment-section">
                     <h4>Objective questions</h4>
