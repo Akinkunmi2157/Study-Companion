@@ -179,7 +179,13 @@
         automaticallyPausedByBlur: false,
         reflectionResourceKeywords: null,
         pendingAssessment: null,
-        activeResourceId: null
+        activeResourceId: null,
+        // Holds { resourceId, promise } for the quiz that's generated in
+        // the background as soon as the reflection modal opens (see
+        // startBackgroundAssessmentPrep()), so submitting the summary
+        // doesn't have to wait for question generation on top of the
+        // alignment check.
+        backgroundPrep: null
     };
 
     // In-memory AI tutor chat session. Not persisted — a fresh chat starts
@@ -1363,6 +1369,7 @@
         timer.checksPassed = 0;
         timer.checksFailed = 0;
         timer.nextVerificationAt = null;
+        timer.backgroundPrep = null;
 
         els.modeTabs.forEach(tab => tab.classList.toggle("active", tab.dataset.mode === mode));
         updateTimerUI();
@@ -1608,6 +1615,12 @@
         els.reflectionAlignment.textContent = "";
         els.reflectionAlignment.className = "alignment-status";
         els.saveReflection.disabled = true;
+
+        // Start generating the quiz now, in the background, while the
+        // student is writing — it only needs the resource, not the
+        // summary, so there's no reason to wait until submit to start it.
+        startBackgroundAssessmentPrep(resource, task);
+
         setTimeout(() => els.reflectionText.focus(), 100);
     }
 
@@ -1647,8 +1660,8 @@
         // Basic writing-quality checks only (length, vocabulary variety,
         // word count, not overly repetitive). Whether the content actually
         // reflects understanding of the resource's topic is judged by the
-        // AI in saveReflection() -> verifySummaryAndGenerateAssessment(),
-        // which evaluates conceptual understanding rather than requiring
+        // AI in saveReflection() -> checkSummaryAlignment(), which
+        // evaluates conceptual understanding rather than requiring
         // literal keyword overlap with the resource text.
         const basicsValid = hasEnoughLength && hasVariety && hasWords && notRepetitive;
 
@@ -2071,56 +2084,108 @@
         };
     }
 
-    async function verifySummaryAndGenerateAssessment(summary, resource, task) {
-        // extractResourceStudyText() already limits itself to the portion
-        // of the resource the student has actually reached (see its PDF
-        // page-limit / docx-and-text percent-limit logic below), so the
-        // quiz — like the alignment check — only ever covers material
-        // they've genuinely read, not the whole document dumped at once.
-        const resourceText = await extractResourceStudyText(resource);
-        if (!resourceText || resourceText.trim().length < 30) {
-            throw new Error("There is not enough readable resource content to verify the summary. Add detailed resource notes or upload a readable PDF/text file.");
+    // -------------------------------------------------------------
+    // Reflection speed-up: the quiz used to be generated in the SAME
+    // Gemini call as the alignment check, so submitting the summary
+    // always had to wait for both a judgment AND up to 40 detailed
+    // questions before anything could happen. Now the quiz is generated
+    // separately, in the background, starting the moment the reflection
+    // modal opens (see startBackgroundAssessmentPrep(), called from
+    // prepareReflectionModal()) — it only depends on the resource, not
+    // the summary, so it can run for the whole time the student spends
+    // typing. By the time they hit submit, checkSummaryAlignment() below
+    // — a small, fast, alignment-only call — is usually the only thing
+    // left to wait on; the quiz is just picked up from
+    // timer.backgroundPrep. The student never sees a distinct
+    // "generating quiz" step either way.
+    // -------------------------------------------------------------
+
+    async function generateAssessmentQuestions(resourceText, questionCount, resource, task) {
+        const prompt = `You are a university professor writing exam-quality multiple-choice questions to test whether a student has genuinely mastered the material below, not just skimmed it. This reflects only the portion of the resource the student has read so far — do not write questions about anything outside it.
+
+RESOURCE TITLE: ${resource?.title || task?.title || "Study resource"}
+RESOURCE CONTENT:\n${resourceText}
+
+Return ONLY valid JSON with this exact structure and nothing else:
+{
+  "objectiveQuestions": [
+    {"question":"", "options":["","","",""], "correctAnswer":0, "explanation":""}
+  ]
+}
+
+Rigor requirements — write these like a university midterm/final, not a reading-recall quiz:
+- Test understanding, application, and analysis, not just recognition of terms or facts stated verbatim in the text. Favor questions that require the student to apply a concept to a new/hypothetical situation, compare or contrast two ideas from the material, identify why something is true (not just that it is), interpret a scenario, spot a common misconception, or work through cause-and-effect or a multi-step implication — over "which of these was mentioned" or fill-in-the-blank recall.
+- Write plausible, non-trivial distractors: wrong options should reflect realistic misunderstandings or near-misses (a common mix-up, an overgeneralization, a subtly incomplete answer), not obviously silly or unrelated choices. Avoid options that can be eliminated purely by length, phrasing, or being the "odd one out."
+- Avoid trivial giveaways: don't let the correct answer be the only option with matching wording from the text, the longest option, or the only fully-formed sentence.
+- Vary question stems and difficulty — mix some direct-application questions with at least a few genuinely challenging ones that require connecting two or more points from the material, while still keeping every question strictly answerable from the resource content given.
+- Do not pad the count with duplicate or trivially-reworded questions.
+- Generate exactly ${questionCount} multiple-choice questions with exactly 4 options each.
+- Base every question only on the resource content above — do not invent questions about material that isn't included in it.
+- Spread the questions across the full span of the provided content rather than clustering them all near the start.
+- correctAnswer must be the zero-based index of the correct option.
+- Include a brief "explanation" for each question that clarifies the reasoning, not just restates the correct option, so the student can review why the correct answer is correct.`;
+
+        const response = await askGemini(prompt, { mode: "assessment-questions" });
+        if (!response) throw new Error("The quiz could not be generated.");
+        const questions = normaliseAssessment(parseJsonObjectFromAi(response), questionCount).objectiveQuestions;
+        if (questions.length !== questionCount || questions.some(q => q.options.length !== 4)) {
+            throw new Error("The generated quiz was incomplete.");
         }
+        return questions;
+    }
 
-        const questionCount = computeQuestionCount(resourceText);
-
-        const prompt = `You are assessing whether a student's study summary demonstrates genuine understanding of the subject matter they studied. The resource below tells you what topic/course area they were studying — use it as context for the subject, not as a script the student must repeat.
+    async function checkSummaryAlignment(summary, resource, task, resourceText) {
+        const prompt = `You are checking whether a student's short study summary demonstrates genuine understanding of the subject matter they read. The resource content below tells you the topic/subject area — use it as context, not as a script the student must repeat.
 
 RESOURCE TITLE: ${resource?.title || task?.title || "Study resource"}
 RESOURCE CONTENT (context on the topic being studied — this reflects only what the student has read so far, not necessarily the full document):\n${resourceText}
 
 STUDENT SUMMARY:\n${summary}
 
-Return ONLY valid JSON with this exact structure:
-{
-  "aligned": true,
-  "alignmentScore": 0,
-  "feedback": "brief evidence-based feedback",
-  "objectiveQuestions": [
-    {"question":"", "options":["","","",""], "correctAnswer":0, "explanation":""}
-  ]
-}
+Return ONLY valid JSON with this exact structure and nothing else:
+{"aligned": true, "alignmentScore": 0, "feedback": "brief evidence-based feedback"}
 
-Rules for judging "aligned" (this is the important part):
+Rules:
 - Judge whether the summary shows real understanding of the general topic/subject area the resource covers — NOT whether it uses the same words, phrases, examples, or structure as the resource.
 - The student may explain the topic using their own words, their own examples, or broader/related knowledge that goes beyond what's in the resource, and should still be marked aligned if that understanding is accurate and relevant to the subject.
 - Only mark aligned=false if the summary is off-topic, contains meaningful factual errors about the subject, or is too vague/generic to show any real understanding (e.g. "I studied it and it was interesting").
 - Do NOT penalise the student for omitting specific terms, facts, or phrasing that happen to appear in the resource but weren't essential to demonstrating understanding.
 - alignmentScore (0-100) should reflect depth of topical understanding, not textual similarity to the resource. Require at least 60 for aligned=true.
+- Keep "feedback" to one or two short sentences. Respond with ONLY the JSON object — no questions, no extra commentary — so this check returns quickly.`;
 
-Rules for the assessment questions (these test comprehension of the material itself, separately from the alignment judgment above):
-- Generate exactly ${questionCount} objective multiple-choice questions with exactly 4 options each, drawn ONLY from the resource content provided above (the portion the student has read so far). Do not write questions about content that isn't included in that text.
-- Spread the questions across the full span of the provided content rather than clustering them all near the start.
-- correctAnswer must be the zero-based index of the correct option.
-- Include a brief "explanation" for each question so the student can review why the correct answer is correct.`;
+        const response = await askGemini(prompt, { mode: "alignment" });
+        if (!response) throw new Error("The summary check could not be completed.");
+        const parsed = parseJsonObjectFromAi(response);
+        return {
+            aligned: parsed?.aligned === true,
+            alignmentScore: Math.max(0, Math.min(100, Number(parsed?.alignmentScore) || 0)),
+            feedback: String(parsed?.feedback || "")
+        };
+    }
 
-        const response = await askGemini(prompt, { mode: "assessment" });
-        if (!response) throw new Error("The resource check could not be completed.");
-        const assessment = normaliseAssessment(parseJsonObjectFromAi(response), questionCount);
-        if (assessment.objectiveQuestions.length !== questionCount || assessment.objectiveQuestions.some(q => q.options.length !== 4)) {
-            throw new Error("The generated assessment was incomplete. Please try again.");
-        }
-        return assessment;
+    // Kicks off resource-text extraction + quiz generation in the
+    // background, tagged with the resource id so a stale result from a
+    // previous resource/session is never accidentally reused.
+    function startBackgroundAssessmentPrep(resource, task) {
+        if (!resource) { timer.backgroundPrep = null; return; }
+
+        const resourceId = resource.id;
+        const promise = (async () => {
+            const resourceText = await extractResourceStudyText(resource);
+            if (!resourceText || resourceText.trim().length < 30) {
+                return { resourceText, questionCount: 0, questions: null };
+            }
+            const questionCount = computeQuestionCount(resourceText);
+            try {
+                const questions = await generateAssessmentQuestions(resourceText, questionCount, resource, task);
+                return { resourceText, questionCount, questions };
+            } catch (error) {
+                console.warn("Background quiz generation failed — will retry once the summary is submitted.", error);
+                return { resourceText, questionCount, questions: null };
+            }
+        })();
+
+        timer.backgroundPrep = { resourceId, promise };
     }
 
     function renderAssessment(assessment) {
@@ -2129,7 +2194,7 @@ Rules for the assessment questions (these test comprehension of the material its
 
         const countNote = document.getElementById("assessmentQuestionCountNote");
         if (countNote) {
-            countNote.textContent = `Answer ${assessment.objectiveQuestions.length} objective questions, generated from the material you've read so far.`;
+            countNote.textContent = `Answer ${assessment.objectiveQuestions.length} university-level questions, generated from the material you've read so far.`;
         }
 
         els.objectiveQuestions.innerHTML = assessment.objectiveQuestions.map((item, index) => `
@@ -2160,18 +2225,58 @@ Rules for the assessment questions (these test comprehension of the material its
         els.saveReflection.disabled = true;
         els.saveReflection.textContent = "Checking summary…";
         els.reflectionAlignment.className = "alignment-status visible";
-        els.reflectionAlignment.textContent = "Checking your understanding of the topic and preparing your assessment…";
+        els.reflectionAlignment.textContent = "Checking your understanding of the topic…";
 
         try {
-            const assessment = await verifySummaryAndGenerateAssessment(summary, resource, task);
+            // Reuse the resource text + quiz generation that started
+            // in the background when this modal opened, as long as it's
+            // for the same resource (guards against a stale promise if
+            // the linked resource somehow changed mid-reflection).
+            let resourceText = null;
+            let questionCount = 0;
+            let questions = null;
+            if (timer.backgroundPrep && timer.backgroundPrep.resourceId === resource.id) {
+                const bg = await timer.backgroundPrep.promise;
+                resourceText = bg.resourceText;
+                questionCount = bg.questionCount;
+                questions = bg.questions;
+            } else {
+                resourceText = await extractResourceStudyText(resource);
+            }
 
-            if (!assessment.aligned) {
+            if (!resourceText || resourceText.trim().length < 30) {
+                throw new Error("There is not enough readable resource content to verify the summary. Add detailed resource notes or upload a readable PDF/text file.");
+            }
+
+            // The alignment check is deliberately small and separate from
+            // question generation, so this is the only thing submitting
+            // usually has to wait on — the quiz above is normally already
+            // done by the time the student clicks submit.
+            const alignment = await checkSummaryAlignment(summary, resource, task, resourceText);
+
+            if (!alignment.aligned) {
                 els.reflectionAlignment.className = "alignment-status visible mismatch";
-                els.reflectionAlignment.textContent = `${assessment.feedback} Alignment score: ${assessment.alignmentScore}%. Revise the summary before continuing.`;
+                els.reflectionAlignment.textContent = `${alignment.feedback} Alignment score: ${alignment.alignmentScore}%. Revise the summary before continuing.`;
                 return;
             }
 
+            // Rare fallback: the background generation hadn't been
+            // started for this resource, or it failed — generate the
+            // quiz now instead of leaving the student stuck.
+            if (!questions) {
+                questionCount = questionCount || computeQuestionCount(resourceText);
+                questions = await generateAssessmentQuestions(resourceText, questionCount, resource, task);
+            }
+
+            const assessment = {
+                aligned: alignment.aligned,
+                alignmentScore: alignment.alignmentScore,
+                feedback: alignment.feedback,
+                objectiveQuestions: questions
+            };
+
             timer.pendingAssessment = { assessment, summary, resourceId: resource.id };
+            timer.backgroundPrep = null;
             renderAssessment(assessment);
             closeModal(els.reflectionModal);
             openModal(els.assessmentModal);
