@@ -2043,8 +2043,8 @@
     // student actually covered felt thin for a real chapter and padded
     // for a short note — this scales with the reading actually done
     // (see computeQuestionCount()'s caller), bounded to a sensible range.
-    const MIN_ASSESSMENT_QUESTIONS = 6;
-    const MAX_ASSESSMENT_QUESTIONS = 14;
+    const MIN_ASSESSMENT_QUESTIONS = 15;
+    const MAX_ASSESSMENT_QUESTIONS = 40;
 
     function computeQuestionCount(resourceText) {
         const wordCount = String(resourceText || "")
