@@ -1827,6 +1827,29 @@ textarea.form-control {
     color: var(--muted);
 }
 
+.resource-progress {
+    height: 6px;
+    margin-top: 12px;
+    overflow: hidden;
+    border-radius: 999px;
+    background: var(--border);
+}
+
+.resource-progress span {
+    display: block;
+    height: 100%;
+    border-radius: inherit;
+    background: var(--primary);
+    transition: width 0.25s ease;
+}
+
+.resource-progress-label {
+    display: block;
+    margin-top: 6px;
+    color: var(--muted);
+    font-size: 0.68rem;
+}
+
 .resource-type {
     display: inline-block;
     margin-top: 18px;
