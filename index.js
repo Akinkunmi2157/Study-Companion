@@ -5,8 +5,16 @@
     const SUPABASE_URL = "https://bbcrrugbulytupozsfpr.supabase.co";
     const SUPABASE_ANON_KEY = "sb_publishable_xNEdsuqY4FR42LoPekTn6A_Z2Nrm8iJ";
 
-    const createClient = window.supabase?.createClient || window.supabaseClient?.createClient || window.supabase;
-    const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+    const createClient =
+        window.supabase?.createClient ||
+        window.supabaseClient?.createClient ||
+        window.supabase;
+
+    const supabase = createClient(
+        SUPABASE_URL,
+        SUPABASE_ANON_KEY
+    );
+
     window.__debugSupabase = supabase;
 
     const RESOURCE_BUCKET = "study-resources";
@@ -15,15 +23,25 @@
     let currentBlobUrl = null;
 
     function getStorageKey(userId) {
-        return userId ? `digital_study_companion_state_${userId}` : "digital_study_companion_state_guest";
+        return userId
+            ? `digital_study_companion_state_${userId}`
+            : "digital_study_companion_state_guest";
     }
 
     async function getCurrentUser() {
         try {
-            const { data: { user } } = await supabase.auth.getUser();
+            const {
+                data: { user }
+            } = await supabase.auth.getUser();
+
             return user;
+
         } catch (err) {
-            console.error("Auth check failed:", err);
+            console.error(
+                "Auth check failed:",
+                err
+            );
+
             return null;
         }
     }
@@ -35,34 +53,65 @@
     const AI_TIMEOUT_MS = 45000;
 
     function extractAiText(data) {
-        if (!data) return "";
-        if (typeof data === "string") return data.trim();
+        if (!data) {
+            return "";
+        }
 
-        const direct = data.text || data.answer || data.response || data.output;
-        if (typeof direct === "string") return direct.trim();
+        if (typeof data === "string") {
+            return data.trim();
+        }
 
-        const candidateText = data?.candidates?.[0]?.content?.parts
-            ?.map(part => part?.text || "")
-            .join("")
-            .trim();
+        const direct =
+            data.text ||
+            data.answer ||
+            data.response ||
+            data.output;
+
+        if (typeof direct === "string") {
+            return direct.trim();
+        }
+
+        const candidateText =
+            data?.candidates?.[0]?.content?.parts
+                ?.map(
+                    part =>
+                        part?.text || ""
+                )
+                .join("")
+                .trim();
 
         return candidateText || "";
     }
 
-    async function invokeGeminiOnce(promptText, extra = {}) {
-        const invokePromise = supabase.functions.invoke("gemini-chat", {
-            body: {
-                prompt: promptText,
-                ...extra
-            }
-        });
-
-        const timeoutPromise = new Promise((_, reject) => {
-            setTimeout(
-                () => reject(new Error("AI request timed out. Please try again.")),
-                AI_TIMEOUT_MS
+    async function invokeGeminiOnce(
+        promptText,
+        extra = {}
+    ) {
+        const invokePromise =
+            supabase.functions.invoke(
+                "gemini-chat",
+                {
+                    body: {
+                        prompt: promptText,
+                        ...extra
+                    }
+                }
             );
-        });
+
+        const timeoutPromise =
+            new Promise(
+                (_, reject) => {
+                    setTimeout(
+                        () =>
+                            reject(
+                                new Error(
+                                    "AI request timed out. Please try again."
+                                )
+                            ),
+                        AI_TIMEOUT_MS
+                    );
+                }
+            );
 
         return Promise.race([
             invokePromise,
@@ -70,25 +119,38 @@
         ]);
     }
 
-    async function askGemini(promptText, extra = {}) {
-        const prompt = String(promptText || "").trim();
+    async function askGemini(
+        promptText,
+        extra = {}
+    ) {
+        const prompt =
+            String(
+                promptText || ""
+            ).trim();
 
         if (!prompt) {
-            throw new Error("The AI request was empty.");
+            throw new Error(
+                "The AI request was empty."
+            );
         }
 
         try {
-            let { data, error } = await invokeGeminiOnce(
-                prompt,
-                extra
-            );
+            let {
+                data,
+                error
+            } =
+                await invokeGeminiOnce(
+                    prompt,
+                    extra
+                );
 
             if (error) {
-                const status = Number(
-                    error?.context?.status ||
-                    error?.status ||
-                    0
-                );
+                const status =
+                    Number(
+                        error?.context?.status ||
+                        error?.status ||
+                        0
+                    );
 
                 if (
                     status === 401 ||
@@ -99,10 +161,11 @@
                     ({
                         data,
                         error
-                    } = await invokeGeminiOnce(
-                        prompt,
-                        extra
-                    ));
+                    } =
+                        await invokeGeminiOnce(
+                            prompt,
+                            extra
+                        ));
                 }
             }
 
@@ -112,11 +175,13 @@
                 let retryAfterSeconds = null;
 
                 try {
-                    const context = error.context;
+                    const context =
+                        error.context;
 
                     if (
                         context &&
-                        typeof context.json === "function"
+                        typeof context.json ===
+                        "function"
                     ) {
                         const body =
                             await context.json();
@@ -131,23 +196,25 @@
                             "";
 
                         retryAfterSeconds =
-                            typeof body?.retryAfterSeconds === "number"
+                            typeof body?.retryAfterSeconds ===
+                                "number"
                                 ? body.retryAfterSeconds
                                 : null;
                     }
-                } catch (_) {
-                }
+
+                } catch (_) { }
 
                 console.error(
                     "Gemini Edge Function Error:",
                     error
                 );
 
-                const aiError = new Error(
-                    detail ||
-                    error.message ||
-                    "The AI service could not be reached."
-                );
+                const aiError =
+                    new Error(
+                        detail ||
+                        error.message ||
+                        "The AI service could not be reached."
+                    );
 
                 aiError.code =
                     code || undefined;
@@ -160,7 +227,8 @@
 
             if (
                 data &&
-                typeof data === "object" &&
+                typeof data ===
+                "object" &&
                 data.error
             ) {
                 console.error(
@@ -168,17 +236,21 @@
                     data.error
                 );
 
-                const aiError = new Error(
-                    typeof data.error === "string"
-                        ? data.error
-                        : "The AI service reported an error."
-                );
+                const aiError =
+                    new Error(
+                        typeof data.error ===
+                            "string"
+                            ? data.error
+                            : "The AI service reported an error."
+                    );
 
                 aiError.code =
-                    data.code || undefined;
+                    data.code ||
+                    undefined;
 
                 aiError.retryAfterSeconds =
-                    typeof data.retryAfterSeconds === "number"
+                    typeof data.retryAfterSeconds ===
+                        "number"
                         ? data.retryAfterSeconds
                         : null;
 
@@ -186,7 +258,9 @@
             }
 
             const text =
-                extractAiText(data);
+                extractAiText(
+                    data
+                );
 
             if (!text) {
                 console.error(
@@ -227,12 +301,11 @@
 
             const waitText =
                 wait > 0
-                    ? ` Please try again in about ${
-                        wait < 60
-                            ? `${wait}s`
-                            : `${Math.ceil(
-                                wait / 60
-                            )} min`
+                    ? ` Please try again in about ${wait < 60
+                        ? `${wait}s`
+                        : `${Math.ceil(
+                            wait / 60
+                        )} min`
                     }.`
                     : " Please try again shortly.";
 
@@ -314,18 +387,6 @@
         pendingAssessment: null,
         activeResourceId: null,
 
-        /*
-         * Holds:
-         *
-         * {
-         *   resourceId,
-         *   resourceTextPromise,
-         *   questionsPromise
-         * }
-         *
-         * The quiz starts silently while the student
-         * is writing the summary.
-         */
         backgroundPrep: null
     };
 
@@ -348,9 +409,7 @@
     ];
 
     const TUTOR_ATTACHMENT_MAX_BYTES =
-        15 * 1024 * 1024;
-
-    // -------------------------------------------------------------
+        15 * 1024 * 1024;// -------------------------------------------------------------
     // ELEMENT REFERENCES
     // -------------------------------------------------------------
 
@@ -1257,7 +1316,9 @@
     }
 
     function passwordScore(password) {
-        if (!password) return 0;
+        if (!password) {
+            return 0;
+        }
 
         return [
             password.length >= 8,
@@ -1282,20 +1343,23 @@
             .querySelectorAll(
                 ".auth-view"
             )
-            .forEach(view =>
-                view.classList.toggle(
-                    "active",
-                    view.id === id
-                )
+            .forEach(
+                view =>
+                    view.classList.toggle(
+                        "active",
+                        view.id === id
+                    )
             );
 
         document
             .querySelectorAll(
                 ".form-error"
             )
-            .forEach(error => {
-                error.textContent = "";
-            });
+            .forEach(
+                error => {
+                    error.textContent = "";
+                }
+            );
     }
 
     async function handleSignup(event) {
@@ -1318,30 +1382,35 @@
         if (name.length < 2) {
             els.signupError.textContent =
                 "Please enter your full name.";
+
             return;
         }
 
         if (!validEmail(email)) {
             els.signupError.textContent =
                 "Enter a valid email address.";
+
             return;
         }
 
         if (!validPassword(password)) {
             els.signupError.textContent =
                 "Use at least 8 characters with uppercase, lowercase, and a number.";
+
             return;
         }
 
         if (password !== confirm) {
             els.signupError.textContent =
                 "The passwords do not match.";
+
             return;
         }
 
         if (!els.acceptTerms.checked) {
             els.signupError.textContent =
                 "Please accept the Terms and Privacy Notice.";
+
             return;
         }
 
@@ -1363,6 +1432,7 @@
         if (error) {
             els.signupError.textContent =
                 error.message;
+
             return;
         }
 
@@ -1401,6 +1471,7 @@
         if (!pendingSignup) {
             els.verifyEmailError.textContent =
                 "Start the signup again to request a new code.";
+
             return;
         }
 
@@ -1410,6 +1481,7 @@
         if (!/^\d{6}$/.test(code)) {
             els.verifyEmailError.textContent =
                 "Enter the 6-digit code from your email.";
+
             return;
         }
 
@@ -1439,7 +1511,8 @@
         const name =
             pendingSignup.name;
 
-        pendingSignup = null;
+        pendingSignup =
+            null;
 
         showToast(
             "Email verified — account created successfully!"
@@ -1455,6 +1528,7 @@
         if (!pendingSignup) {
             els.verifyEmailError.textContent =
                 "Start the signup again to request a new code.";
+
             return;
         }
 
@@ -1694,7 +1768,8 @@
 
         await supabase.auth.signOut();
 
-        currentUser = null;
+        currentUser =
+            null;
 
         state =
             structuredClone(
@@ -1724,40 +1799,42 @@
             .querySelectorAll(
                 "[data-auth-view]"
             )
-            .forEach(button =>
-                button.addEventListener(
-                    "click",
-                    () =>
-                        showAuthView(
-                            button.dataset.authView
-                        )
-                )
+            .forEach(
+                button =>
+                    button.addEventListener(
+                        "click",
+                        () =>
+                            showAuthView(
+                                button.dataset.authView
+                            )
+                    )
             );
 
         document
             .querySelectorAll(
                 "[data-password-toggle]"
             )
-            .forEach(button =>
-                button.addEventListener(
-                    "click",
-                    () => {
-                        const input =
-                            document.getElementById(
-                                button.dataset.passwordToggle
-                            );
+            .forEach(
+                button =>
+                    button.addEventListener(
+                        "click",
+                        () => {
+                            const input =
+                                document.getElementById(
+                                    button.dataset.passwordToggle
+                                );
 
-                        input.type =
-                            input.type === "password"
-                                ? "text"
-                                : "password";
+                            input.type =
+                                input.type === "password"
+                                    ? "text"
+                                    : "password";
 
-                        button.textContent =
-                            input.type === "password"
-                                ? "Show"
-                                : "Hide";
-                    }
-                )
+                            button.textContent =
+                                input.type === "password"
+                                    ? "Show"
+                                    : "Hide";
+                        }
+                    )
             );
 
         els.signupPassword.addEventListener(
@@ -1777,7 +1854,9 @@
                 }
 
                 const score =
-                    passwordScore(val);
+                    passwordScore(
+                        val
+                    );
 
                 els.passwordStrengthBar.style.width =
                     `${score * 20}%`;
@@ -1808,9 +1887,7 @@
             );
         }
 
-        if (
-            els.resendVerificationCode
-        ) {
+        if (els.resendVerificationCode) {
             els.resendVerificationCode.addEventListener(
                 "click",
                 handleResendVerificationCode
@@ -1845,17 +1922,23 @@
 
         return {
             tasks:
-                Array.isArray(stored.tasks)
+                Array.isArray(
+                    stored.tasks
+                )
                     ? stored.tasks
                     : [],
 
             sessions:
-                Array.isArray(stored.sessions)
+                Array.isArray(
+                    stored.sessions
+                )
                     ? stored.sessions
                     : [],
 
             resources:
-                Array.isArray(stored.resources)
+                Array.isArray(
+                    stored.resources
+                )
                     ? stored.resources
                     : [],
 
@@ -2119,7 +2202,6 @@
 
         await persistStateNow();
     }
-
     // -------------------------------------------------------------
     // GENERAL UTILITIES
     // -------------------------------------------------------------
@@ -2183,11 +2265,9 @@
             return fallback();
         }
     }
-
     function renderMarkdown(text = "") {
         let source =
             String(text);
-
         const mathBlocks = [];
         const mathInline = [];
 
@@ -2204,7 +2284,6 @@
                             true
                         )
                     );
-
                     return `\uE000B${mathBlocks.length - 1}\uE000`;
                 }
             );
@@ -2222,7 +2301,6 @@
                             false
                         )
                     );
-
                     return `\uE000I${mathInline.length - 1}\uE000`;
                 }
             );
@@ -2238,7 +2316,6 @@
             );
 
         const htmlBlocks = [];
-
         let listBuffer = [];
         let listType = null;
         let olCounter = 0;
@@ -2303,7 +2380,6 @@
 
             if (dividerMatch) {
                 flushList();
-
                 olCounter = 0;
 
                 htmlBlocks.push(
@@ -2320,7 +2396,6 @@
 
             if (headerMatch) {
                 flushList();
-
                 olCounter = 0;
 
                 const level =
@@ -2367,7 +2442,6 @@
                     "ul"
                 ) {
                     flushList();
-
                     listType =
                         "ul";
                 }
@@ -2392,7 +2466,6 @@
                     "ol"
                 ) {
                     flushList();
-
                     listType =
                         "ol";
                 }
@@ -2404,7 +2477,6 @@
                 );
 
                 olCounter += 1;
-
                 continue;
             }
 
@@ -2430,7 +2502,7 @@
                     i
                 ) =>
                     mathBlocks[
-                        Number(i)
+                    Number(i)
                     ]
             );
 
@@ -2442,7 +2514,7 @@
                     i
                 ) =>
                     mathInline[
-                        Number(i)
+                    Number(i)
                     ]
             );
 
@@ -2463,7 +2535,9 @@
             els.toastContainer;
 
         const existing =
-            [...container.children].find(
+            [
+                ...container.children
+            ].find(
                 toast =>
                     toast.dataset.message ===
                     message &&
@@ -2487,7 +2561,9 @@
         }
 
         const current =
-            [...container.children];
+            [
+                ...container.children
+            ];
 
         while (
             current.length >=
@@ -2701,7 +2777,7 @@
 
         els.themeToggle.textContent =
             state.settings.theme ===
-            "dark"
+                "dark"
                 ? "☀"
                 : "☾";
     }
@@ -2719,11 +2795,13 @@
 
         const hours =
             Math.floor(
-                minutes / 60
+                minutes /
+                60
             );
 
         const remainder =
-            minutes % 60;
+            minutes %
+            60;
 
         return `${hours}h ${remainder}m`;
     }
@@ -3065,7 +3143,7 @@
                 item => {
                     const height =
                         item.minutes ===
-                        0
+                            0
                             ? 6
                             : Math.max(
                                 12,
@@ -3088,24 +3166,24 @@
                         );
 
                     return `
-                        <div
-                            class="chart-bar-group"
-                            title="${item.minutes} study minutes"
-                        >
-                            <span class="chart-value">
-                                ${item.minutes}m
-                            </span>
+<div
+class="chart-bar-group"
+title="${item.minutes} study minutes"
+>
+<span class="chart-value">
+${item.minutes}m
+</span>
 
-                            <div
-                                class="chart-bar"
-                                style="height:${height}px"
-                            ></div>
+<div
+class="chart-bar"
+style="height:${height}px"
+></div>
 
-                            <span class="chart-label">
-                                ${label}
-                            </span>
-                        </div>
-                    `;
+<span class="chart-label">
+${label}
+</span>
+</div>
+`;
                 }
             ).join("");
     }
@@ -3165,10 +3243,10 @@
                         b
                     ) =>
                         priorityOrder[
-                            a.priority
+                        a.priority
                         ] -
                         priorityOrder[
-                            b.priority
+                        b.priority
                         ]
                 )
                 .slice(
@@ -3181,48 +3259,46 @@
                 ? activeTasks
                     .map(
                         task => `
-                            <div class="compact-task">
-                                <span
-                                    class="compact-task__status"
-                                    style="background:${
-                                        task.priority === "high"
-                                            ? "var(--danger)"
-                                            : task.priority === "medium"
-                                                ? "var(--warning)"
-                                                : "var(--success)"
-                                    }"
-                                ></span>
+<div class="compact-task">
+<span
+class="compact-task__status"
+style="background:${task.priority === "high"
+                                ? "var(--danger)"
+                                : task.priority === "medium"
+                                    ? "var(--warning)"
+                                    : "var(--success)"
+                            }"
+></span>
 
-                                <div class="compact-task__content">
-                                    <strong>
-                                        ${escapeHtml(
-                                            task.title
-                                        )}
-                                    </strong>
+<div class="compact-task__content">
+<strong>
+${escapeHtml(
+                                task.title
+                            )}
+</strong>
 
-                                    <small>
-                                        ${
-                                            task.dueDate
-                                                ? `Due ${formatDate(
-                                                    task.dueDate
-                                                )}`
-                                                : "No due date"
-                                        }
-                                    </small>
-                                </div>
+<small>
+${task.dueDate
+                                ? `Due ${formatDate(
+                                    task.dueDate
+                                )}`
+                                : "No due date"
+                            }
+</small>
+</div>
 
-                                <span class="priority-badge priority-${task.priority}">
-                                    ${task.priority}
-                                </span>
-                            </div>
-                        `
+<span class="priority-badge priority-${task.priority}">
+${task.priority}
+</span>
+</div>
+`
                     )
                     .join("")
                 : `
-                    <div class="empty-state">
-                        No active tasks. Add a task and give your next session a clear target.
-                    </div>
-                `;
+<div class="empty-state">
+No active tasks. Add a task and give your next session a clear target.
+</div>
+`;
 
         renderBarChart(
             els.weeklyChart,
@@ -3377,10 +3453,10 @@
         if (!tasks.length) {
             container.innerHTML =
                 `
-                <div class="empty-state">
-                    No tasks here.
-                </div>
-                `;
+<div class="empty-state">
+No tasks here.
+</div>
+`;
 
             return;
         }
@@ -3389,6 +3465,7 @@
             todo: {
                 next:
                     "inProgress",
+
                 label:
                     "Start"
             },
@@ -3396,6 +3473,7 @@
             inProgress: {
                 next:
                     "done",
+
                 label:
                     "Complete"
             },
@@ -3403,6 +3481,7 @@
             done: {
                 next:
                     "todo",
+
                 label:
                     "Reopen"
             }
@@ -3420,111 +3499,109 @@
                 )
                 .map(
                     task => `
-                        <article class="task-card">
-                            <div class="task-card__top">
-                                <div class="task-card__badges">
-                                    <span class="priority-badge priority-${task.priority}">
-                                        ${task.priority}
-                                    </span>
+<article class="task-card">
+<div class="task-card__top">
+<div class="task-card__badges">
 
-                                    ${
-                                        status === "done" &&
-                                        task.unverifiedCompletion
-                                            ? `
-                                                <span
-                                                    class="unverified-badge"
-                                                    title="Marked complete without a logged study session"
-                                                >
-                                                    Unverified
-                                                </span>
-                                            `
-                                            : ""
-                                    }
-                                </div>
+<span class="priority-badge priority-${task.priority}">
+${task.priority}
+</span>
 
-                                <button
-                                    class="task-menu-button"
-                                    data-edit-task="${task.id}"
-                                    title="Edit task"
-                                >
-                                    ✎
-                                </button>
-                            </div>
+${status === "done" &&
+                            task.unverifiedCompletion
+                            ? `
+<span
+class="unverified-badge"
+title="Marked complete without a logged study session"
+>
+Unverified
+</span>
+`
+                            : ""
+                        }
 
-                            <h4>
-                                ${escapeHtml(
-                                    task.title
-                                )}
-                            </h4>
+</div>
 
-                            <p>
-                                ${escapeHtml(
-                                    task.description ||
-                                    "No description added."
-                                )}
-                            </p>
+<button
+class="task-menu-button"
+data-edit-task="${task.id}"
+title="Edit task"
+>
+✎
+</button>
+</div>
 
-                            ${
-                                task.resourceId
-                                    ? `
-                                        <div class="linked-resource">
-                                            📎 ${
-                                                escapeHtml(
-                                                    getResource(
-                                                        task.resourceId
-                                                    )?.title ||
-                                                    "Linked resource"
-                                                )
-                                            }
-                                        </div>
-                                    `
-                                    : ""
-                            }
+<h4>
+${escapeHtml(
+                            task.title
+                        )}
+</h4>
 
-                            <div class="task-card__footer">
-                                <span>
-                                    ${
-                                        task.dueDate
-                                            ? `Due ${formatDate(
-                                                task.dueDate
-                                            )}`
-                                            : "No due date"
-                                    }
-                                </span>
+<p>
+${escapeHtml(
+                            task.description ||
+                            "No description added."
+                        )}
+</p>
 
-                                <div class="task-card__actions">
-                                    ${
-                                        task.resourceId &&
-                                        status !== "done"
-                                            ? `
-                                                <button
-                                                    class="task-action-button"
-                                                    data-study-task="${task.id}"
-                                                >
-                                                    Study
-                                                </button>
-                                            `
-                                            : ""
-                                    }
+${task.resourceId
+                            ? `
+<div class="linked-resource">
+📎 ${escapeHtml(
+                                getResource(
+                                    task.resourceId
+                                )?.title ||
+                                "Linked resource"
+                            )}
+</div>
+`
+                            : ""
+                        }
 
-                                    <button
-                                        class="task-action-button"
-                                        data-move-task="${task.id}"
-                                        data-next-status="${statusAction.next}"
-                                    >
-                                        ${statusAction.label}
-                                    </button>
+<div class="task-card__footer">
+<span>
+${task.dueDate
+                            ? `Due ${formatDate(
+                                task.dueDate
+                            )}`
+                            : "No due date"
+                        }
+</span>
 
-                                    <button
-                                        class="task-action-button"
-                                        data-delete-task="${task.id}"
-                                    >
-                                        Delete
-                                    </button>
-                                </div>
-                            </div>
-                        </article>
-                    `
+<div class="task-card__actions">
+
+${task.resourceId &&
+                            status !== "done"
+                            ? `
+<button
+class="task-action-button"
+data-study-task="${task.id}"
+>
+Study
+</button>
+`
+                            : ""
+                        }
+
+<button
+class="task-action-button"
+data-move-task="${task.id}"
+data-next-status="${statusAction.next}"
+>
+${statusAction.label}
+</button>
+
+<button
+class="task-action-button"
+data-delete-task="${task.id}"
+>
+Delete
+</button>
+
+</div>
+</div>
+</article>
+`
                 )
                 .join("");
     }
@@ -3657,6 +3734,7 @@
         );
 
         renderTasks();
+
         renderDashboard();
     }
 
@@ -3688,7 +3766,9 @@
             );
 
         saveState();
+
         renderTasks();
+
         renderDashboard();
 
         showToast(
@@ -3773,7 +3853,9 @@
         saveState();
 
         renderTasks();
+
         renderDashboard();
+
         renderProgress();
 
         showToast(
@@ -3966,8 +4048,19 @@
                 : "Digital Study Companion";
     }
 
+    let timerStartInProgress =
+        false;
+
     function toggleTimer() {
-        if (timer.running) {
+        if (
+            timerStartInProgress
+        ) {
+            return;
+        }
+
+        if (
+            timer.running
+        ) {
             pauseTimer(
                 "Paused"
             );
@@ -3978,54 +4071,132 @@
         startTimer();
     }
 
-    function startTimer() {
+    async function startTimer() {
         if (
-            timer.mode ===
-            "focus" &&
-            timer.remainingSeconds ===
-            timer.totalSeconds
+            timer.running ||
+            timerStartInProgress
         ) {
-            timer.sessionStartedAt =
-                Date.now();
-
-            timer.focusViolations =
-                0;
-
-            timer.checksPassed =
-                0;
-
-            timer.checksFailed =
-                0;
-
-            scheduleNextVerification();
+            return;
         }
 
-        if (
-            timer.mode ===
-            "focus" &&
-            state.settings.focusTracking &&
-            document.documentElement.requestFullscreen
-        ) {
-            document.documentElement
-                .requestFullscreen()
-                .catch(
-                    () => {}
-                );
-        }
-
-        timer.running =
+        timerStartInProgress =
             true;
 
-        timer.automaticallyPausedByBlur =
-            false;
+        try {
+            if (
+                timer.mode ===
+                "focus" &&
+                state.settings.focusTracking &&
+                !document.fullscreenElement
+            ) {
+                if (
+                    !document.documentElement.requestFullscreen
+                ) {
+                    updateTimerUI();
 
-        timer.intervalId =
-            window.setInterval(
-                tickTimer,
-                1000
-            );
+                    els.timerStatus.textContent =
+                        "Fullscreen required";
 
-        updateTimerUI();
+                    showToast(
+                        "Full screen is required for a focus session, but this browser does not support it.",
+                        "error"
+                    );
+
+                    return;
+                }
+
+                try {
+                    await document.documentElement.requestFullscreen();
+
+                } catch (error) {
+                    console.warn(
+                        "Could not enter required fullscreen mode.",
+                        error
+                    );
+
+                    timer.running =
+                        false;
+
+                    updateTimerUI();
+
+                    els.timerStatus.textContent =
+                        "Fullscreen required";
+
+                    showToast(
+                        "A focus session can only start in full screen. Allow full screen and try again.",
+                        "error"
+                    );
+
+                    return;
+                }
+
+                if (
+                    !document.fullscreenElement
+                ) {
+                    timer.running =
+                        false;
+
+                    updateTimerUI();
+
+                    els.timerStatus.textContent =
+                        "Fullscreen required";
+
+                    showToast(
+                        "Full screen is required before the focus timer can start.",
+                        "error"
+                    );
+
+                    return;
+                }
+            }
+
+            if (
+                timer.mode ===
+                "focus" &&
+                timer.remainingSeconds ===
+                timer.totalSeconds
+            ) {
+                timer.sessionStartedAt =
+                    Date.now();
+
+                timer.focusViolations =
+                    0;
+
+                timer.checksPassed =
+                    0;
+
+                timer.checksFailed =
+                    0;
+
+                scheduleNextVerification();
+            }
+
+            timer.running =
+                true;
+
+            timer.automaticallyPausedByBlur =
+                false;
+
+            if (
+                timer.intervalId
+            ) {
+                window.clearInterval(
+                    timer.intervalId
+                );
+            }
+
+            timer.intervalId =
+                window.setInterval(
+                    tickTimer,
+                    1000
+                );
+
+            updateTimerUI();
+
+        } finally {
+            timerStartInProgress =
+                false;
+        }
     }
 
     function pauseTimer(
@@ -4034,7 +4205,9 @@
         timer.running =
             false;
 
-        if (timer.intervalId) {
+        if (
+            timer.intervalId
+        ) {
             window.clearInterval(
                 timer.intervalId
             );
@@ -4054,7 +4227,7 @@
             document
                 .exitFullscreen()
                 .catch(
-                    () => {}
+                    () => { }
                 );
         }
     }
@@ -4150,7 +4323,9 @@
     }
 
     function clearTimerIntervals() {
-        if (timer.intervalId) {
+        if (
+            timer.intervalId
+        ) {
             window.clearInterval(
                 timer.intervalId
             );
@@ -4252,7 +4427,7 @@
         ) {
             const nextMode =
                 timer.cycle >=
-                state.settings.cyclesBeforeLongBreak
+                    state.settings.cyclesBeforeLongBreak
                     ? "longBreak"
                     : "shortBreak";
 
@@ -4303,25 +4478,36 @@
 
         const minimum =
             Math.min(
-                8 * 60 * 1000,
-                totalMs * 0.35
+                8 *
+                60 *
+                1000,
+
+                totalMs *
+                0.35
             );
 
         const maximum =
             Math.min(
-                18 * 60 * 1000,
-                totalMs * 0.75
+                18 *
+                60 *
+                1000,
+
+                totalMs *
+                0.75
             );
 
         if (
-            maximum <= 30000 ||
-            maximum <= minimum
+            maximum <=
+            30000 ||
+            maximum <=
+            minimum
         ) {
             timer.nextVerificationAt =
                 Date.now() +
                 Math.max(
                     15000,
-                    totalMs * 0.5
+                    totalMs *
+                    0.5
                 );
 
             return;
@@ -4366,8 +4552,7 @@
         timer.verificationIntervalId =
             window.setInterval(
                 () => {
-                    seconds -=
-                        1;
+                    seconds -= 1;
 
                     els.verificationCountdown.textContent =
                         Math.max(
@@ -4574,12 +4759,6 @@
         els.saveReflection.disabled =
             true;
 
-        /*
-         * IMPORTANT:
-         *
-         * Question generation begins silently HERE,
-         * while the student is still writing.
-         */
         startBackgroundAssessmentPrep(
             resource,
             task
@@ -4620,11 +4799,10 @@
 
         if (aiResponse) {
             els.reflectionText.value =
-                `I focused on ${topic}. ${
-                    aiResponse.replace(
-                        /[*#]/g,
-                        ""
-                    )
+                `I focused on ${topic}. ${aiResponse.replace(
+                    /[*#]/g,
+                    ""
+                )
                 }`;
 
             validateReflection();
@@ -4683,7 +4861,8 @@
         );
 
         const notRepetitive =
-            words.length === 0 ||
+            words.length ===
+            0 ||
             Math.max(
                 ...Object.values(
                     wordCounts
@@ -4717,7 +4896,8 @@
         value = ""
     ) {
         return String(
-            value || ""
+            value ||
+            ""
         )
             .trim()
             .replace(
@@ -4731,13 +4911,24 @@
             .trim();
     }
 
-    function parseJsonObjectFromAi(
-        value
-    ) {
-        const cleaned =
-            stripCodeFence(
-                value
-            );
+    function parseJsonObjectFromAi(value) {
+        let cleaned =
+            String(
+                value ||
+                ""
+            ).trim();
+
+        cleaned =
+            cleaned
+                .replace(
+                    /^```(?:json)?\s*/i,
+                    ""
+                )
+                .replace(
+                    /\s*```$/i,
+                    ""
+                )
+                .trim();
 
         try {
             return JSON.parse(
@@ -4745,46 +4936,75 @@
             );
 
         } catch (_) {
-            const firstBrace =
-                cleaned.indexOf(
-                    "{"
-                );
+        }
 
-            const lastBrace =
-                cleaned.lastIndexOf(
-                    "}"
-                );
+        const firstBrace =
+            cleaned.indexOf(
+                "{"
+            );
 
-            if (
-                firstBrace === -1 ||
-                lastBrace <=
-                firstBrace
-            ) {
-                throw new Error(
-                    "The AI returned an invalid assessment response. Please try again."
+        const lastBrace =
+            cleaned.lastIndexOf(
+                "}"
+            );
+
+        if (
+            firstBrace !== -1 &&
+            lastBrace >
+            firstBrace
+        ) {
+            const candidate =
+                cleaned.slice(
+                    firstBrace,
+                    lastBrace +
+                    1
                 );
-            }
 
             try {
                 return JSON.parse(
-                    cleaned.slice(
-                        firstBrace,
-                        lastBrace +
-                        1
-                    )
+                    candidate
                 );
 
-            } catch (error) {
-                console.error(
-                    "Assessment JSON parse failed:",
-                    cleaned,
-                    error
-                );
-
-                throw new Error(
-                    "The AI returned malformed assessment data. Please try again."
-                );
+            } catch (_) {
+                cleaned =
+                    candidate;
             }
+        }
+
+        const repaired =
+            cleaned
+                .replace(
+                    /,\s*([}\]])/g,
+                    "$1"
+                )
+                .replace(
+                    /[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g,
+                    ""
+                );
+
+        try {
+            return JSON.parse(
+                repaired
+            );
+
+        } catch (error) {
+            console.error(
+                "Assessment JSON parse failed.",
+                {
+                    original:
+                        value,
+
+                    cleaned,
+
+                    repaired,
+
+                    error
+                }
+            );
+
+            throw new Error(
+                "The AI returned malformed assessment data."
+            );
         }
     }
 
@@ -4796,7 +5016,9 @@
         url = ""
     ) {
         const match =
-            String(url).match(
+            String(
+                url
+            ).match(
                 /(?:youtube\.com\/watch\?v=|youtu\.be\/)([\w-]+)/
             );
 
@@ -4920,7 +5142,7 @@
 
                 const progress =
                     resource.readProgress?.kind ===
-                    "pdf"
+                        "pdf"
                         ? resource.readProgress
                         : null;
 
@@ -4964,7 +5186,9 @@
                     );
                 }
 
-                return `${metadata}\n\n${pages.join("\n")}`.slice(
+                return `${metadata}\n\n${pages.join(
+                    "\n"
+                )}`.slice(
                     0,
                     60000
                 );
@@ -4986,7 +5210,7 @@
 
                 const progress =
                     resource.readProgress?.kind ===
-                    "docx"
+                        "docx"
                         ? resource.readProgress
                         : null;
 
@@ -5027,7 +5251,7 @@
 
                 const progress =
                     resource.readProgress?.kind ===
-                    "text"
+                        "text"
                         ? resource.readProgress
                         : null;
 
@@ -5119,7 +5343,9 @@
             100
         );
 
-        if (!tutorChat.context) {
+        if (
+            !tutorChat.context
+        ) {
             els.tutorChatMessages.innerHTML =
                 `<p class="tutor-chat-empty">Reading the resource…</p>`;
 
@@ -5140,6 +5366,7 @@
             null;
 
         renderTutorAttachmentPreview();
+
         renderTutorMessages();
 
         els.tutorChatInput.value =
@@ -5173,7 +5400,7 @@
 
                         const body =
                             msg.role ===
-                            "assistant"
+                                "assistant"
                                 ? renderMarkdown(
                                     msg.text
                                 )
@@ -5182,16 +5409,15 @@
                                 );
 
                         return `
-                            <div class="tutor-msg ${
-                                msg.role ===
+<div class="tutor-msg ${msg.role ===
                                 "user"
-                                    ? "user"
-                                    : "assistant"
+                                ? "user"
+                                : "assistant"
                             }">
-                                ${attachment}
-                                ${body}
-                            </div>
-                        `;
+${attachment}
+${body}
+</div>
+`;
                     }
                 )
                 .join("");
@@ -5209,14 +5435,18 @@
             );
 
         if (!visible) {
-            if (existing) {
+            if (
+                existing
+            ) {
                 existing.remove();
             }
 
             return;
         }
 
-        if (existing) {
+        if (
+            existing
+        ) {
             return;
         }
 
@@ -5333,8 +5563,10 @@
 
             tutorChat.attachment = {
                 base64,
+
                 mimeType:
                     file.type,
+
                 name:
                     file.name
             };
@@ -5384,7 +5616,7 @@
 
         const icon =
             attachment.mimeType ===
-            "application/pdf"
+                "application/pdf"
                 ? "📄"
                 : "🖼️";
 
@@ -5394,28 +5626,30 @@
 
         els.tutorChatAttachmentPreview.innerHTML =
             `
-            <span class="tutor-attachment-chip">
-                ${icon}
-                ${escapeHtml(
-                    attachment.name
-                )}
+<span class="tutor-attachment-chip">
+${icon}
+${escapeHtml(
+                attachment.name
+            )}
 
-                <button
-                    type="button"
-                    id="tutorChatRemoveAttachment"
-                    aria-label="Remove attachment"
-                >
-                    ✕
-                </button>
-            </span>
-            `;
+<button
+type="button"
+id="tutorChatRemoveAttachment"
+aria-label="Remove attachment"
+>
+✕
+</button>
+</span>
+`;
 
         const removeButton =
             document.getElementById(
                 "tutorChatRemoveAttachment"
             );
 
-        if (removeButton) {
+        if (
+            removeButton
+        ) {
             removeButton.addEventListener(
                 "click",
                 clearTutorAttachment
@@ -5450,7 +5684,8 @@
                 ) =>
                     line ||
                     (
-                        index > 0 &&
+                        index >
+                        0 &&
                         index <
                         lines.length -
                         1
@@ -5532,7 +5767,9 @@
             null;
 
         renderTutorAttachmentPreview();
+
         renderTutorMessages();
+
         setTutorTyping(
             true
         );
@@ -5598,7 +5835,6 @@
                 await askGemini(
                     question ||
                     "Look at the attached file and help me understand it.",
-
                     {
                         mode:
                             "tutor",
@@ -5702,10 +5938,10 @@
         30;
 
     const ASSESSMENT_BATCH_SIZE =
-        8;
+        5;
 
     const ASSESSMENT_BATCH_CONCURRENCY =
-        2;
+        1;
 
     function computeQuestionCount(
         resourceText
@@ -5842,7 +6078,8 @@
             );
 
         if (
-            batchCount <= 1 ||
+            batchCount <=
+            1 ||
             text.length <
             12000
         ) {
@@ -5865,7 +6102,8 @@
                 batchIndex *
                 baseSize -
                 (
-                    batchIndex > 0
+                    batchIndex >
+                        0
                         ? overlap
                         : 0
                 )
@@ -5882,8 +6120,8 @@
                 baseSize +
                 (
                     batchIndex <
-                    batchCount -
-                    1
+                        batchCount -
+                        1
                         ? overlap
                         : 0
                 )
@@ -5904,11 +6142,9 @@
         batchCount
     ) {
         const prompt =
-`You are a university professor designing a rigorous examination.
+            `You are a university professor creating a rigorous multiple-choice examination.
 
-Create high-quality multiple-choice questions that determine whether a university student genuinely understands and can apply the material below.
-
-This must NOT feel like a simple reading-recall quiz.
+Create EXACTLY ${batchQuestionCount} questions from the supplied study material.
 
 RESOURCE TITLE:
 ${resource?.title || task?.title || "Study resource"}
@@ -5916,142 +6152,91 @@ ${resource?.title || task?.title || "Study resource"}
 RESOURCE SECTION:
 Section ${batchIndex + 1} of ${batchCount}
 
+STUDY MATERIAL:
 ${resourceText}
 
-Return ONLY valid JSON.
+ACADEMIC LEVEL:
 
-Do not use Markdown.
-Do not add any text before or after the JSON.
+Questions should resemble serious university examination questions.
 
-Use EXACTLY this structure:
+Prioritise:
 
-{
-  "objectiveQuestions": [
-    {
-      "question": "",
-      "options": ["", "", "", ""],
-      "correctAnswer": 0,
-      "explanation": ""
-    }
-  ]
-}
-
-Generate EXACTLY ${batchQuestionCount} questions.
-
-ACADEMIC STANDARD:
-
-Write these like a serious university midterm or final examination.
-
-The assessment should primarily test:
-
-- conceptual understanding
 - application
 - analysis
-- scenario interpretation
-- comparing related concepts
-- cause-and-effect reasoning
-- identifying misconceptions
 - inference
-- drawing conclusions
-- connecting multiple ideas
+- scenario reasoning
+- comparison
+- cause and effect
+- misconception detection
+- connecting concepts
+- consequences of applying principles
 - multi-step reasoning
 
-At least HALF of the questions must require the student to apply, analyse, infer, compare, or connect two or more ideas.
+At least half of the questions must require reasoning rather than direct recall.
 
-Use realistic hypothetical scenarios where appropriate.
+Avoid simple questions such as:
 
-Do not make the exam primarily about:
+- "What is X?"
+- "Which of the following was mentioned?"
+- direct quotation recognition
+- obvious definition recall
 
-- definitions
-- direct quotations
-- identifying sentences from the resource
-- obvious facts
-- which item was mentioned
-- simple recognition
-- fill-in-the-blank recall
+Each question must have exactly FOUR answer options.
 
-A small number of foundational questions are acceptable when necessary, but most questions must go beyond recall.
+Wrong answers must be plausible academic distractors.
 
-QUESTION QUALITY:
+Do not create joke answers or obviously incorrect choices.
 
-Do not simply copy sentences from the resource and turn them into questions.
+Every question must be answerable from the supplied study material.
 
-Do not duplicate questions.
+Do not use outside knowledge.
 
-Do not trivially reword the same idea several times.
+For hypothetical scenarios, the reasoning required to answer them must come entirely from the supplied material.
 
-Spread the questions across the supplied material.
+RETURN FORMAT:
 
-Every question must have exactly four options.
+Return ONLY one valid JSON object.
 
-DISTRACTOR QUALITY:
+No Markdown.
+No code fences.
+No introduction.
+No conclusion.
+No explanation outside the JSON.
 
-Wrong answers must be believable.
+Use exactly:
 
-Use realistic mistakes such as:
+{
+"objectiveQuestions": [
+{
+"question": "Question text",
+"options": [
+"Option A",
+"Option B",
+"Option C",
+"Option D"
+],
+"correctAnswer": 0,
+"explanation": "Brief explanation"
+}
+]
+}
 
-- confusing two related concepts
-- applying the correct concept in the wrong situation
-- reversing cause and effect
-- overgeneralising a valid principle
-- choosing a partially correct explanation
-- omitting an important condition
-- using reasoning that sounds convincing but is incomplete
+IMPORTANT:
 
-Do not use obviously ridiculous or unrelated choices.
-
-Do not make the correct answer easy to identify because:
-
-- it is much longer than the others
-- it copies wording directly from the resource
-- it is the only detailed option
-- it is the only grammatically complete option
-- it is the obvious odd option out
-
-CONTENT GROUNDING:
-
-Every question must be answerable strictly from the supplied resource section.
-
-Do not introduce outside facts.
-
-You MAY create new hypothetical scenarios, but the answer must be reasoned entirely from concepts present in the supplied resource.
-
-QUESTION VARIETY:
-
-Use a mixture of:
-
-- application questions
-- analytical questions
-- scenario questions
-- comparison questions
-- misconception questions
-- inference questions
-- consequence questions
-- best-explanation questions
-
-correctAnswer must be the zero-based index:
-
-0 = first option
-1 = second option
-2 = third option
-3 = fourth option
-
-Each explanation should briefly explain WHY the answer is correct.
-
-Normally keep each explanation to one or two concise sentences.
-
-Again:
-
-Return ONLY valid JSON.
-
-Generate exactly ${batchQuestionCount} questions.`;
+- objectiveQuestions must contain EXACTLY ${batchQuestionCount} objects.
+- Every options array must contain EXACTLY 4 strings.
+- correctAnswer must only be 0, 1, 2, or 3.
+- Do not place commas after the final array/object item.
+- Keep explanations concise.
+- Output JSON immediately.`;
 
         let lastError =
             null;
 
         for (
-            let attempt = 0;
-            attempt < 2;
+            let attempt = 1;
+            attempt <=
+            3;
             attempt += 1
         ) {
             try {
@@ -6066,7 +6251,7 @@ Generate exactly ${batchQuestionCount} questions.`;
 
                 if (!response) {
                     throw new Error(
-                        "The quiz could not be generated."
+                        "The AI returned an empty quiz response."
                     );
                 }
 
@@ -6075,21 +6260,91 @@ Generate exactly ${batchQuestionCount} questions.`;
                         response
                     );
 
-                const questions =
-                    normaliseAssessment(
-                        parsed,
-                        batchQuestionCount
-                    ).objectiveQuestions;
-
                 if (
-                    questions.length !==
-                    batchQuestionCount ||
-                    questions.some(
-                        question =>
-                            question.options.length !==
-                            4
+                    !parsed ||
+                    !Array.isArray(
+                        parsed.objectiveQuestions
                     )
                 ) {
+                    throw new Error(
+                        "The AI response did not contain objectiveQuestions."
+                    );
+                }
+
+                const questions =
+                    parsed.objectiveQuestions.map(
+                        item => ({
+                            question:
+                                String(
+                                    item?.question ||
+                                    ""
+                                ).trim(),
+
+                            options:
+                                Array.isArray(
+                                    item?.options
+                                )
+                                    ? item.options.map(
+                                        option =>
+                                            String(
+                                                option
+                                            ).trim()
+                                    )
+                                    : [],
+
+                            correctAnswer:
+                                Number(
+                                    item?.correctAnswer
+                                ),
+
+                            explanation:
+                                String(
+                                    item?.explanation ||
+                                    ""
+                                ).trim()
+                        })
+                    );
+
+                const valid =
+                    questions.length ===
+                    batchQuestionCount &&
+                    questions.every(
+                        question =>
+                            question.question &&
+                            question.options.length ===
+                            4 &&
+                            question.options.every(
+                                Boolean
+                            ) &&
+                            Number.isInteger(
+                                question.correctAnswer
+                            ) &&
+                            question.correctAnswer >=
+                            0 &&
+                            question.correctAnswer <=
+                            3
+                    );
+
+                if (!valid) {
+                    console.warn(
+                        "Generated assessment batch failed validation.",
+                        {
+                            batch:
+                                batchIndex +
+                                1,
+
+                            attempt,
+
+                            expected:
+                                batchQuestionCount,
+
+                            received:
+                                questions.length,
+
+                            response
+                        }
+                    );
+
                     throw new Error(
                         "The generated quiz batch was incomplete."
                     );
@@ -6102,16 +6357,30 @@ Generate exactly ${batchQuestionCount} questions.`;
                     error;
 
                 console.warn(
-                    `Assessment batch ${batchIndex + 1}/${batchCount} attempt ${attempt + 1} failed.`,
+                    `Assessment batch ${batchIndex + 1}/${batchCount} attempt ${attempt}/3 failed.`,
                     error
                 );
+
+                if (
+                    attempt <
+                    3
+                ) {
+                    await new Promise(
+                        resolve =>
+                            setTimeout(
+                                resolve,
+                                500 *
+                                attempt
+                            )
+                    );
+                }
             }
         }
 
         throw (
             lastError ||
             new Error(
-                "The quiz could not be generated."
+                "Assessment generation failed."
             )
         );
     }
@@ -6142,7 +6411,8 @@ Generate exactly ${batchQuestionCount} questions.`;
             total;
 
         while (
-            remaining > 0
+            remaining >
+            0
         ) {
             const size =
                 Math.min(
@@ -6186,11 +6456,9 @@ Generate exactly ${batchQuestionCount} questions.`;
                 ] =
                     await generateAssessmentQuestionBatch(
                         excerpt,
-
                         batchSizes[
-                            batchIndex
+                        batchIndex
                         ],
-
                         resource,
                         task,
                         batchIndex,
@@ -6211,7 +6479,6 @@ Generate exactly ${batchQuestionCount} questions.`;
                     length:
                         workerCount
                 },
-
                 () =>
                     worker()
             )
@@ -6304,24 +6571,19 @@ Generate exactly ${batchQuestionCount} questions.`;
             );
 
         const prompt =
-`You are evaluating whether a university student's short study summary demonstrates genuine understanding of the topic they just studied.
+            `You are evaluating whether a university student's short study summary demonstrates genuine understanding of the topic they just studied.
 
 This is NOT a plagiarism check.
-
 This is NOT a keyword-matching exercise.
-
 This is NOT a test of whether the student remembers every detail.
 
 RESOURCE TITLE:
-
 ${resource?.title || task?.title || "Study resource"}
 
 RESOURCE CONTEXT:
-
 ${alignmentContext}
 
 STUDENT SUMMARY:
-
 ${summary}
 
 Return ONLY valid JSON with this exact structure and nothing else:
@@ -6331,33 +6593,19 @@ Return ONLY valid JSON with this exact structure and nothing else:
 Rules:
 
 - Judge conceptual understanding, not textual similarity.
-
 - The student does not need to copy wording, use the exact terminology, follow the same order, mention every detail, or reproduce examples.
-
 - The student may explain the topic in their own words.
-
 - The student may simplify an idea accurately.
-
 - The student may use their own examples.
-
 - The student may paraphrase.
-
 - The student may connect the material to accurate related knowledge.
-
 - A concise but accurate explanation can demonstrate understanding.
-
 - Mark aligned=false only when the summary is substantially off-topic, meaningfully factually incorrect, contradictory to the central subject, meaningless/repetitive, or so vague that it demonstrates no real understanding.
-
 - Generic statements such as "I studied this topic and it was interesting" should fail because they do not demonstrate understanding.
-
 - alignmentScore must measure the quality and depth of demonstrated conceptual understanding, not wording similarity.
-
 - aligned should be true only when alignmentScore is at least 60.
-
 - Keep feedback to one short sentence where possible and never more than two short sentences.
-
 - Do NOT generate assessment questions here.
-
 - Return the JSON object immediately with no Markdown or extra commentary.`;
 
         const response =
@@ -6383,10 +6631,8 @@ Rules:
         const alignmentScore =
             Math.max(
                 0,
-
                 Math.min(
                     100,
-
                     Number(
                         parsed?.alignmentScore
                     ) ||
@@ -6429,26 +6675,11 @@ Rules:
         const resourceId =
             resource.id;
 
-        /*
-         * Begin extracting the resource immediately.
-         *
-         * This promise is shared by both:
-         *
-         * - quiz generation
-         * - summary checking
-         *
-         * so the file does not need to be extracted twice.
-         */
         const resourceTextPromise =
             extractResourceStudyText(
                 resource
             );
 
-        /*
-         * Start quiz generation silently.
-         *
-         * The student does not see a loading state.
-         */
         const questionsPromise =
             resourceTextPromise.then(
                 async resourceText => {
@@ -6488,14 +6719,6 @@ Rules:
                         };
 
                     } catch (error) {
-                        /*
-                         * Background generation is an optimisation.
-                         *
-                         * It must never break the student's session.
-                         *
-                         * saveReflection() will fall back to normal
-                         * generation after the summary is accepted.
-                         */
                         console.warn(
                             "Background quiz generation failed — falling back to post-summary generation.",
                             error
@@ -6503,6 +6726,7 @@ Rules:
 
                         return {
                             questionCount,
+
                             questions:
                                 null
                         };
@@ -6521,17 +6745,15 @@ Rules:
         assessment
     ) {
         els.assessmentSummaryStatus.className =
-            `assessment-summary-status ${
-                assessment.aligned
-                    ? "match"
-                    : "mismatch"
+            `assessment-summary-status ${assessment.aligned
+                ? "match"
+                : "mismatch"
             }`;
 
         els.assessmentSummaryStatus.innerHTML =
-            `<strong>${
-                assessment.aligned
-                    ? "Summary confirmed"
-                    : "Summary needs correction"
+            `<strong>${assessment.aligned
+                ? "Summary confirmed"
+                : "Summary needs correction"
             } — ${assessment.alignmentScore}% alignment</strong><p>${escapeHtml(
                 assessment.feedback
             )}</p>`;
@@ -6541,11 +6763,11 @@ Rules:
                 "assessmentQuestionCountNote"
             );
 
-        if (countNote) {
+        if (
+            countNote
+        ) {
             countNote.textContent =
-                `Answer ${
-                    assessment.objectiveQuestions.length
-                } university-level questions, generated from the material you've read so far.`;
+                `Answer ${assessment.objectiveQuestions.length} university-level questions, generated from the material you've read so far.`;
         }
 
         els.objectiveQuestions.innerHTML =
@@ -6555,192 +6777,197 @@ Rules:
                         item,
                         index
                     ) => `
-                        <fieldset class="assessment-question">
-                            <legend>
-                                ${index + 1}.
-                                ${escapeHtml(
-                                    item.question
+<fieldset class="assessment-question">
+<legend>
+${index + 1}.
+${escapeHtml(
+                        item.question
+                    )}
+</legend>
+
+${item.options
+                            .map(
+                                (
+                                    option,
+                                    optionIndex
+                                ) => `
+<label class="assessment-option">
+
+<input
+type="radio"
+name="objective-${index}"
+value="${optionIndex}"
+>
+
+<span>
+${escapeHtml(
+                                    option
                                 )}
-                            </legend>
+</span>
 
-                            ${
-                                item.options
-                                    .map(
-                                        (
-                                            option,
-                                            optionIndex
-                                        ) => `
-                                            <label class="assessment-option">
-                                                <input
-                                                    type="radio"
-                                                    name="objective-${index}"
-                                                    value="${optionIndex}"
-                                                >
+</label>
+`
+                            )
+                            .join("")
+                        }
 
-                                                <span>
-                                                    ${escapeHtml(
-                                                        option
-                                                    )}
-                                                </span>
-                                            </label>
-                                        `
-                                    )
-                                    .join("")
-                            }
-                        </fieldset>
-                    `
+</fieldset>
+`
                 )
                 .join("");
 
         els.assessmentValidation.textContent =
             "";
     }
+async function saveReflection() {
+    if (
+        !timer.pendingCompletion ||
+        els.saveReflection.disabled
+    ) {
+        return;
+    }
 
-    async function saveReflection() {
-        if (
-            !timer.pendingCompletion ||
-            els.saveReflection.disabled
-        ) {
-            return;
-        }
+    const task =
+        state.tasks.find(
+            item =>
+                item.id ===
+                timer.pendingCompletion.taskId
+        );
 
-        const task =
-            state.tasks.find(
-                item =>
-                    item.id ===
-                    timer.pendingCompletion.taskId
-            );
+    const resourceId =
+        task?.resourceId ||
+        timer.pendingCompletion.resourceId;
 
-        const resourceId =
-            task?.resourceId ||
-            timer.pendingCompletion.resourceId;
+    const resource =
+        resourceId
+            ? getResource(
+                resourceId
+            )
+            : null;
 
-        const resource =
-            resourceId
-                ? getResource(
-                    resourceId
-                )
-                : null;
+    const summary =
+        els.reflectionText.value.trim();
 
-        const summary =
-            els.reflectionText.value.trim();
+    if (!resource) {
+        showToast(
+            "Link a study resource to this task before the summary can be verified.",
+            "error"
+        );
+        return;
+    }
 
-        if (!resource) {
-            showToast(
-                "Link a study resource to this task before the summary can be verified.",
-                "error"
-            );
+    els.saveReflection.disabled =
+        true;
 
-            return;
-        }
+    els.saveReflection.textContent =
+        "Checking summary…";
 
-        els.saveReflection.disabled =
-            true;
+    els.reflectionAlignment.className =
+        "alignment-status visible";
 
-        els.saveReflection.textContent =
-            "Checking summary…";
+    els.reflectionAlignment.textContent =
+        "Checking your understanding of the topic…";
 
-        els.reflectionAlignment.className =
-            "alignment-status visible";
-
-        els.reflectionAlignment.textContent =
-            "Checking your understanding of the topic…";
-
-        try {
-            const bg =
-                timer.backgroundPrep &&
+    try {
+        const bg =
+            timer.backgroundPrep &&
                 timer.backgroundPrep.resourceId ===
                 resource.id
-                    ? timer.backgroundPrep
-                    : null;
+                ? timer.backgroundPrep
+                : null;
 
-            /*
-             * CRITICAL FIX:
-             *
-             * We only wait for RESOURCE EXTRACTION here.
-             *
-             * We DO NOT wait for quiz generation before
-             * checking the student's summary.
-             */
-            const resourceText =
-                bg
-                    ? await bg.resourceTextPromise
-                    : await extractResourceStudyText(
-                        resource
-                    );
+        /*
+        * We only wait for resource extraction here.
+        * Quiz generation continues independently.
+        */
+        const resourceText =
+            bg
+                ? await bg.resourceTextPromise
+                : await extractResourceStudyText(
+                    resource
+                );
 
-            if (
-                !resourceText ||
+        if (
+            !resourceText ||
+            resourceText
+                .trim()
+                .length <
+            30
+        ) {
+            throw new Error(
+                "There is not enough readable resource content to verify the summary. Add detailed resource notes or upload a readable PDF/text file."
+            );
+        }
+
+        /*
+        * Summary verification happens immediately.
+        */
+        const alignment =
+            await checkSummaryAlignment(
+                summary,
+                resource,
+                task,
                 resourceText
-                    .trim()
-                    .length <
-                30
-            ) {
-                throw new Error(
-                    "There is not enough readable resource content to verify the summary. Add detailed resource notes or upload a readable PDF/text file."
-                );
-            }
+            );
 
-            /*
-             * Summary verification starts immediately.
-             *
-             * Meanwhile, questions can continue generating
-             * silently in the background.
-             */
-            const alignment =
-                await checkSummaryAlignment(
-                    summary,
-                    resource,
-                    task,
-                    resourceText
-                );
+        if (!alignment.aligned) {
+            els.reflectionAlignment.className =
+                "alignment-status visible mismatch";
 
-            if (!alignment.aligned) {
-                els.reflectionAlignment.className =
-                    "alignment-status visible mismatch";
+            els.reflectionAlignment.textContent =
+                `${alignment.feedback} Alignment score: ${alignment.alignmentScore}%. Revise the summary before continuing.`;
 
-                els.reflectionAlignment.textContent =
-                    `${alignment.feedback} Alignment score: ${alignment.alignmentScore}%. Revise the summary before continuing.`;
+            return;
+        }
 
-                return;
-            }
+        /*
+        * The summary is valid at this point.
+        *
+        * Quiz-generation failure must never be reported
+        * as summary-verification failure.
+        */
+        let questionCount =
+            computeQuestionCount(
+                resourceText
+            );
 
-            /*
-             * Summary accepted.
-             *
-             * Now retrieve the questions that were being
-             * prepared while the student was typing.
-             */
-            let questionCount =
-                computeQuestionCount(
-                    resourceText
-                );
+        let questions =
+            null;
 
-            let questions =
-                null;
-
-            if (bg) {
+        if (bg) {
+            try {
                 const prepared =
                     await bg.questionsPromise;
 
-                questionCount =
-                    prepared.questionCount ||
-                    questionCount;
+                if (prepared) {
+                    questionCount =
+                        prepared.questionCount ||
+                        questionCount;
+
+                    questions =
+                        prepared.questions ||
+                        null;
+                }
+
+            } catch (error) {
+                console.warn(
+                    "Background assessment preparation failed. Using fallback generation.",
+                    error
+                );
 
                 questions =
-                    prepared.questions;
+                    null;
             }
+        }
 
-            /*
-             * FALLBACK:
-             *
-             * If background generation failed,
-             * generate normally now.
-             *
-             * This returns the system to the reliable
-             * previous behaviour instead of breaking.
-             */
-            if (!questions) {
+        if (!questions) {
+            els.reflectionAlignment.className =
+                "alignment-status visible match";
+
+            els.reflectionAlignment.textContent =
+                "Summary confirmed. Preparing your assessment…";
+
+            try {
                 questions =
                     await generateAssessmentQuestions(
                         resourceText,
@@ -6748,1304 +6975,1428 @@ Rules:
                         resource,
                         task
                     );
-            }
 
-            /*
-             * Absolute final safety cap.
-             */
-            questions =
-                questions.slice(
-                    0,
-                    MAX_ASSESSMENT_QUESTIONS
-                );
-
-            const assessment = {
-                aligned:
-                    alignment.aligned,
-
-                alignmentScore:
-                    alignment.alignmentScore,
-
-                feedback:
-                    alignment.feedback,
-
-                objectiveQuestions:
-                    questions
-            };
-
-            timer.pendingAssessment = {
-                assessment,
-                summary,
-
-                resourceId:
-                    resource.id
-            };
-
-            timer.backgroundPrep =
-                null;
-
-            renderAssessment(
-                assessment
-            );
-
-            closeModal(
-                els.reflectionModal
-            );
-
-            openModal(
-                els.assessmentModal
-            );
-
-        } catch (error) {
-            console.error(
-                "Reflection verification failed:",
-                error
-            );
-
-            els.reflectionAlignment.className =
-                "alignment-status visible mismatch";
-
-            els.reflectionAlignment.textContent =
-                describeAiError(
+            } catch (error) {
+                console.error(
+                    "Assessment generation failed after summary was accepted.",
                     error
                 );
 
-        } finally {
-            els.saveReflection.textContent =
-                "Check summary & continue";
+                /*
+                * The reflection has already passed.
+                * Do not tell the student the reflection failed.
+                */
+                els.reflectionAlignment.className =
+                    "alignment-status visible mismatch";
 
-            if (
-                typeof validateReflection ===
-                "function"
-            ) {
-                validateReflection();
+                els.reflectionAlignment.textContent =
+                    "Your summary was accepted, but the assessment could not be prepared. Please click Continue again to retry.";
 
-            } else {
-                els.saveReflection.disabled =
-                    false;
+                return;
             }
         }
-    }
 
-    // -------------------------------------------------------------
-    // ASSESSMENT RESULT REVIEW
-    // -------------------------------------------------------------
-
-    function openAssessmentResultsModal(
-        assessment,
-        objectiveAnswers,
-        objectiveScore,
-        onContinue
-    ) {
-        const backdrop =
-            document.createElement(
-                "div"
+        /*
+        * Final question cap.
+        */
+        questions =
+            questions.slice(
+                0,
+                MAX_ASSESSMENT_QUESTIONS
             );
 
-        backdrop.className =
-            "modal-backdrop";
+        const assessment = {
+            aligned:
+                alignment.aligned,
 
-        const objectiveHtml =
-            assessment.objectiveQuestions
-                .map(
-                    (
-                        item,
-                        index
-                    ) => {
-                        const selected =
-                            objectiveAnswers[
-                                index
-                            ];
+            alignmentScore:
+                alignment.alignmentScore,
 
-                        const correct =
-                            item.correctAnswer;
+            feedback:
+                alignment.feedback,
 
-                        const isCorrect =
-                            selected ===
-                            correct;
-
-                        const optionsHtml =
-                            item.options
-                                .map(
-                                    (
-                                        option,
-                                        optionIndex
-                                    ) => {
-                                        let marker =
-                                            "";
-
-                                        let style =
-                                            "";
-
-                                        if (
-                                            optionIndex ===
-                                            correct
-                                        ) {
-                                            marker =
-                                                "✓ ";
-
-                                            style =
-                                                "color:var(--success);font-weight:700;";
-
-                                        } else if (
-                                            optionIndex ===
-                                            selected
-                                        ) {
-                                            marker =
-                                                "✗ ";
-
-                                            style =
-                                                "color:var(--danger);font-weight:700;";
-                                        }
-
-                                        return `
-                                            <label
-                                                class="assessment-option"
-                                                style="${style}"
-                                            >
-                                                <span>
-                                                    ${marker}${escapeHtml(
-                                                        option
-                                                    )}
-                                                </span>
-                                            </label>
-                                        `;
-                                    }
-                                )
-                                .join("");
-
-                        return `
-                            <fieldset class="assessment-question">
-                                <legend>
-                                    ${index + 1}.
-                                    ${escapeHtml(
-                                        item.question
-                                    )}
-
-                                    <span
-                                        style="
-                                            margin-left:8px;
-                                            font-weight:800;
-                                            color:${
-                                                isCorrect
-                                                    ? "var(--success)"
-                                                    : "var(--danger)"
-                                            };
-                                        "
-                                    >
-                                        ${
-                                            isCorrect
-                                                ? "Correct"
-                                                : "Incorrect"
-                                        }
-                                    </span>
-                                </legend>
-
-                                ${optionsHtml}
-
-                                ${
-                                    item.explanation
-                                        ? `
-                                            <p
-                                                style="
-                                                    margin:12px 4px 0;
-                                                    color:var(--muted);
-                                                    font-size:.8rem;
-                                                    line-height:1.55;
-                                                "
-                                            >
-                                                <strong
-                                                    style="color:var(--text);"
-                                                >
-                                                    Why:
-                                                </strong>
-
-                                                ${escapeHtml(
-                                                    item.explanation
-                                                )}
-                                            </p>
-                                        `
-                                        : ""
-                                }
-                            </fieldset>
-                        `;
-                    }
-                )
-                .join("");
-
-        backdrop.innerHTML =
-            `
-            <div class="modal-card assessment-card">
-                <div class="modal-header">
-                    <div>
-                        <p class="eyebrow">
-                            Session results
-                        </p>
-
-                        <h3>
-                            Review your answers
-                        </h3>
-                    </div>
-                </div>
-
-                <div class="assessment-summary-status ${
-                    objectiveScore >=
-                    3
-                        ? "match"
-                        : "mismatch"
-                }">
-                    <strong>
-                        Grade:
-                        ${objectiveScore}/${assessment.objectiveQuestions.length}
-                    </strong>
-
-                    <p>
-                        Go through each question below to see the correct answer and why it's correct.
-                    </p>
-                </div>
-
-                <section class="assessment-section">
-                    <h4>
-                        Objective questions
-                    </h4>
-
-                    <div class="assessment-question-list">
-                        ${objectiveHtml}
-                    </div>
-                </section>
-
-                <div class="modal-actions">
-                    <button
-                        class="primary-button"
-                        id="closeAssessmentResultsButton"
-                    >
-                        Continue
-                    </button>
-                </div>
-            </div>
-            `;
-
-        document.body.appendChild(
-            backdrop
-        );
-
-        openModal(
-            backdrop
-        );
-
-        const finish =
-            () => {
-                closeModal(
-                    backdrop
-                );
-
-                backdrop.remove();
-
-                if (
-                    typeof onContinue ===
-                    "function"
-                ) {
-                    onContinue();
-                }
-            };
-
-        backdrop
-            .querySelector(
-                "#closeAssessmentResultsButton"
-            )
-            .addEventListener(
-                "click",
-                finish
-            );
-
-        backdrop.addEventListener(
-            "mousedown",
-            event => {
-                if (
-                    event.target ===
-                    backdrop
-                ) {
-                    finish();
-                }
-            }
-        );
-    }
-
-    function submitAssessment(
-        event
-    ) {
-        event.preventDefault();
-
-        if (
-            !timer.pendingCompletion ||
-            !timer.pendingAssessment
-        ) {
-            return;
-        }
-
-        const {
-            assessment,
-            summary,
-            resourceId
-        } =
-            timer.pendingAssessment;
-
-        const objectiveAnswers =
-            assessment.objectiveQuestions.map(
-                (
-                    _,
-                    index
-                ) => {
-                    const selected =
-                        els.assessmentForm.querySelector(
-                            `input[name="objective-${index}"]:checked`
-                        );
-
-                    return selected
-                        ? Number(
-                            selected.value
-                        )
-                        : null;
-                }
-            );
-
-        if (
-            objectiveAnswers.some(
-                answer =>
-                    answer ===
-                    null
-            )
-        ) {
-            els.assessmentValidation.textContent =
-                `Answer all ${assessment.objectiveQuestions.length} questions before submitting.`;
-
-            return;
-        }
-
-        const objectiveScore =
-            objectiveAnswers.reduce(
-                (
-                    score,
-                    answer,
-                    index
-                ) =>
-                    score +
-                    (
-                        answer ===
-                        assessment.objectiveQuestions[
-                            index
-                        ].correctAnswer
-                            ? 1
-                            : 0
-                    ),
-                0
-            );
-
-        const task =
-            state.tasks.find(
-                item =>
-                    item.id ===
-                    timer.pendingCompletion.taskId
-            );
-
-        const session = {
-            id:
-                crypto.randomUUID(),
-
-            ...timer.pendingCompletion,
-
-            taskTitle:
-                task?.title ||
-                "General study session",
-
-            resourceId,
-
-            reflection:
-                summary,
-
-            summaryAlignmentScore:
-                assessment.alignmentScore,
-
-            assessment: {
-                objectiveScore,
-
-                objectiveTotal:
-                    assessment.objectiveQuestions.length,
-
-                objectiveAnswers,
-
-                objectiveQuestions:
-                    assessment.objectiveQuestions
-            },
-
-            integrity:
-                timer.pendingCompletion.focusViolations ===
-                0 &&
-                timer.pendingCompletion.checksFailed ===
-                0
-                    ? "verified"
-                    : "flagged"
+            objectiveQuestions:
+                questions
         };
 
-        state.sessions.push(
-            session
-        );
-
-        if (
-            task &&
-            task.status ===
-            "todo"
-        ) {
-            task.status =
-                "inProgress";
-        }
-
-        saveState();
-
-        closeModal(
-            els.assessmentModal
-        );
-
-        timer.pendingCompletion =
-            null;
-
-        timer.pendingAssessment =
-            null;
-
-        openAssessmentResultsModal(
+        timer.pendingAssessment = {
             assessment,
-            objectiveAnswers,
-            objectiveScore,
+            summary,
 
-            () => {
-                const nextMode =
-                    timer.cycle >=
-                    state.settings.cyclesBeforeLongBreak
-                        ? "longBreak"
-                        : "shortBreak";
-
-                if (
-                    timer.cycle >=
-                    state.settings.cyclesBeforeLongBreak
-                ) {
-                    timer.cycle =
-                        1;
-
-                } else {
-                    timer.cycle +=
-                        1;
-                }
-
-                setTimerMode(
-                    nextMode,
-                    true
-                );
-
-                els.sessionGoal.value =
-                    "";
-
-                els.goalCount.textContent =
-                    "0";
-
-                renderAll();
-
-                showToast(
-                    `Verified session logged. Grade: ${objectiveScore}/${assessment.objectiveQuestions.length}.`
-                );
-            }
-        );
-    }
-
-    function backToReflection() {
-        closeModal(
-            els.assessmentModal
-        );
-
-        openModal(
-            els.reflectionModal
-        );
-
-        timer.pendingAssessment =
-            null;
-
-        validateReflection();
-    }
-
-    function discardSession() {
-        if (
-            !window.confirm(
-                "Discard this completed session without logging it?"
-            )
-        ) {
-            return;
-        }
-
-        timer.pendingCompletion =
-            null;
-
-        timer.pendingAssessment =
-            null;
+            resourceId:
+                resource.id
+        };
 
         timer.backgroundPrep =
             null;
 
+        renderAssessment(
+            assessment
+        );
+
         closeModal(
             els.reflectionModal
         );
 
-        const nextMode =
-            timer.cycle >=
-            state.settings.cyclesBeforeLongBreak
-                ? "longBreak"
-                : "shortBreak";
+        openModal(
+            els.assessmentModal
+        );
+
+    } catch (error) {
+        console.error(
+            "Reflection verification failed:",
+            error
+        );
+
+        els.reflectionAlignment.className =
+            "alignment-status visible mismatch";
+
+        els.reflectionAlignment.textContent =
+            describeAiError(
+                error
+            );
+
+    } finally {
+        els.saveReflection.textContent =
+            "Check summary & continue";
 
         if (
-            timer.cycle >=
-            state.settings.cyclesBeforeLongBreak
+            typeof validateReflection ===
+            "function"
         ) {
-            timer.cycle =
-                1;
+            validateReflection();
 
         } else {
-            timer.cycle +=
-                1;
+            els.saveReflection.disabled =
+                false;
         }
-
-        setTimerMode(
-            nextMode,
-            true
-        );
-
-        showToast(
-            "Session discarded.",
-            "warning"
-        );
     }
+}
 
-    // -------------------------------------------------------------
-    // PROGRESS
-    // -------------------------------------------------------------
+// -------------------------------------------------------------
+// ASSESSMENT RESULT REVIEW
+// -------------------------------------------------------------
 
-    function renderProgress() {
-        const totalMinutes =
-            state.sessions.reduce(
+function openAssessmentResultsModal(
+    assessment,
+    objectiveAnswers,
+    objectiveScore,
+    onContinue
+) {
+    const backdrop =
+        document.createElement(
+            "div"
+        );
+
+    backdrop.className =
+        "modal-backdrop";
+
+    const objectiveHtml =
+        assessment.objectiveQuestions
+            .map(
                 (
-                    sum,
-                    session
-                ) =>
-                    sum +
-                    session.durationMinutes,
-                0
-            );
+                    item,
+                    index
+                ) => {
+                    const selected =
+                        objectiveAnswers[
+                        index
+                        ];
 
-        const streaks =
-            calculateStreaks();
+                    const correct =
+                        item.correctAnswer;
 
-        const completed =
-            state.tasks.filter(
-                task =>
-                    task.status ===
-                    "done"
-            ).length;
+                    const isCorrect =
+                        selected ===
+                        correct;
 
-        const completionRate =
-            state.tasks.length
-                ? Math.round(
-                    (
-                        completed /
-                        state.tasks.length
-                    ) *
-                    100
-                )
-                : 0;
+                    const optionsHtml =
+                        item.options
+                            .map(
+                                (
+                                    option,
+                                    optionIndex
+                                ) => {
+                                    let marker =
+                                        "";
 
-        const weeklyMinutes =
-            getWeeklyMinutes();
+                                    let style =
+                                        "";
 
-        const weeklyPercent =
-            Math.min(
-                100,
+                                    if (
+                                        optionIndex ===
+                                        correct
+                                    ) {
+                                        marker =
+                                            "✓ ";
 
-                Math.round(
-                    (
-                        weeklyMinutes /
-                        state.settings.weeklyGoalMinutes
-                    ) *
-                    100
-                )
-            );
+                                        style =
+                                            "color:var(--success);font-weight:700;";
 
-        els.progressStreak.textContent =
-            streaks.current;
+                                    } else if (
+                                        optionIndex ===
+                                        selected
+                                    ) {
+                                        marker =
+                                            "✗ ";
 
-        els.longestStreak.textContent =
-            streaks.longest;
-
-        els.progressTotalTime.textContent =
-            formatMinutes(
-                totalMinutes
-            );
-
-        els.completionRate.textContent =
-            `${completionRate}%`;
-
-        els.weeklyGoalPercent.textContent =
-            `${weeklyPercent}%`;
-
-        els.weeklyGoalCaption.textContent =
-            `${Math.round(
-                weeklyMinutes
-            )} of ${state.settings.weeklyGoalMinutes} minutes`;
-
-        els.goalRing.style.setProperty(
-            "--goal-progress",
-            `${weeklyPercent * 3.6}deg`
-        );
-
-        renderBarChart(
-            els.progressChart,
-            getLastSevenDays(),
-            true
-        );
-
-        renderHistory();
-    }
-
-    function renderHistory() {
-        const sessions = [
-            ...state.sessions
-        ].sort(
-            (
-                a,
-                b
-            ) =>
-                b.completedAt -
-                a.completedAt
-        );
-
-        els.historyBody.innerHTML =
-            sessions.length
-                ? sessions
-                    .map(
-                        session => `
-                            <tr>
-                                <td>
-                                    ${formatDate(
-                                        session.completedAt
-                                    )}
-                                </td>
-
-                                <td>
-                                    ${escapeHtml(
-                                        session.taskTitle ||
-                                        "General study session"
-                                    )}
-                                </td>
-
-                                <td>
-                                    ${session.durationMinutes} min
-                                </td>
-
-                                <td>
-                                    <span
-                                        class="integrity-badge ${
-                                            session.integrity ===
-                                            "verified"
-                                                ? "integrity-good"
-                                                : "integrity-flagged"
-                                        }"
-                                    >
-                                        ${
-                                            session.integrity ===
-                                            "verified"
-                                                ? "Verified"
-                                                : "Flagged"
-                                        }
-                                    </span>
-                                </td>
-
-                                <td>
-                                    <button
-                                        class="text-button"
-                                        data-view-reflection="${session.id}"
-                                    >
-                                        View
-                                    </button>
-
-                                    ${
-                                        session.assessment
-                                            ? `
-                                                <button
-                                                    class="text-button"
-                                                    data-view-results="${session.id}"
-                                                >
-                                                    Results
-                                                </button>
-                                            `
-                                            : ""
+                                        style =
+                                            "color:var(--danger);font-weight:700;";
                                     }
-                                </td>
-                            </tr>
-                        `
-                    )
-                    .join("")
-                : `
-                    <tr>
-                        <td colspan="5">
-                            <div class="empty-state">
-                                No completed sessions yet.
-                            </div>
-                        </td>
-                    </tr>
-                `;
-    }
 
-    function viewReflection(
-        id
-    ) {
-        const session =
-            state.sessions.find(
-                item =>
-                    item.id ===
-                    id
-            );
+                                    return `
+<label
+class="assessment-option"
+style="${style}"
+>
+<span>
+${marker}${escapeHtml(
+                                        option
+                                    )}
+</span>
+</label>
+`;
+                                }
+                            )
+                            .join("");
 
-        if (!session) {
-            return;
-        }
+                    return `
+<fieldset class="assessment-question">
+<legend>
+${index + 1}.
+${escapeHtml(
+                        item.question
+                    )}
 
-        els.reflectionViewTitle.textContent =
-            session.taskTitle ||
-            "Session reflection";
+<span
+style="
+margin-left:8px;
+font-weight:800;
+color:${isCorrect
+                            ? "var(--success)"
+                            : "var(--danger)"
+                        };
+"
+>
+${isCorrect
+                            ? "Correct"
+                            : "Incorrect"
+                        }
+</span>
+</legend>
 
-        els.reflectionViewText.textContent =
-            session.reflection;
+${optionsHtml}
 
-        openModal(
-            els.reflectionViewModal
-        );
-    }
+${item.explanation
+                            ? `
+<p
+style="
+margin:12px 4px 0;
+color:var(--muted);
+font-size:.8rem;
+line-height:1.55;
+"
+>
+<strong
+style="color:var(--text);"
+>
+Why:
+</strong>
 
-    function viewSessionResults(
-        id
-    ) {
-        const session =
-            state.sessions.find(
-                item =>
-                    item.id ===
-                    id
-            );
-
-        if (
-            !session ||
-            !session.assessment
-        ) {
-            return;
-        }
-
-        const assessment = {
-            objectiveQuestions:
-                session.assessment.objectiveQuestions
-        };
-
-        openAssessmentResultsModal(
-            assessment,
-
-            session.assessment.objectiveAnswers,
-
-            session.assessment.objectiveScore,
-
-            () => {}
-        );
-    }
-
-    // -------------------------------------------------------------
-    // SETTINGS
-    // -------------------------------------------------------------
-
-    function populateSettings() {
-        els.focusMinutesSetting.value =
-            state.settings.focusMinutes;
-
-        els.shortBreakSetting.value =
-            state.settings.shortBreakMinutes;
-
-        els.longBreakSetting.value =
-            state.settings.longBreakMinutes;
-
-        els.cyclesSetting.value =
-            state.settings.cyclesBeforeLongBreak;
-
-        els.weeklyGoalSetting.value =
-            state.settings.weeklyGoalMinutes;
-
-        state.settings.focusTracking =
-            true;
-
-        state.settings.verificationChecks =
-            true;
-
-        state.settings.sound =
-            true;
-
-        els.focusTrackingSetting.checked =
-            true;
-
-        els.verificationSetting.checked =
-            true;
-
-        els.soundSetting.checked =
-            true;
-    }
-
-    function saveSettings() {
-        const next = {
-            focusMinutes:
-                Number(
-                    els.focusMinutesSetting.value
-                ),
-
-            shortBreakMinutes:
-                Number(
-                    els.shortBreakSetting.value
-                ),
-
-            longBreakMinutes:
-                Number(
-                    els.longBreakSetting.value
-                ),
-
-            cyclesBeforeLongBreak:
-                Number(
-                    els.cyclesSetting.value
-                ),
-
-            weeklyGoalMinutes:
-                Number(
-                    els.weeklyGoalSetting.value
-                ),
-
-            focusTracking:
-                true,
-
-            verificationChecks:
-                true,
-
-            sound:
-                true,
-
-            theme:
-                state.settings.theme
-        };
-
-        const valid =
-            next.focusMinutes >=
-            1 &&
-            next.focusMinutes <=
-            180 &&
-
-            next.shortBreakMinutes >=
-            1 &&
-            next.shortBreakMinutes <=
-            60 &&
-
-            next.longBreakMinutes >=
-            1 &&
-            next.longBreakMinutes <=
-            90 &&
-
-            next.cyclesBeforeLongBreak >=
-            1 &&
-            next.cyclesBeforeLongBreak <=
-            10 &&
-
-            next.weeklyGoalMinutes >=
-            30 &&
-            next.weeklyGoalMinutes <=
-            10080;
-
-        if (!valid) {
-            showToast(
-                "Please check the timer and weekly goal values.",
-                "error"
-            );
-
-            return;
-        }
-
-        state.settings =
-            next;
-
-        saveState();
-
-        if (!timer.running) {
-            setTimerMode(
-                timer.mode,
-                true
-            );
-        }
-
-        renderAll();
-
-        showToast(
-            "Settings saved."
-        );
-    }
-
-    async function resetAllData() {
-        if (
-            !window.confirm(
-                "Reset every task, session, and setting stored for this user?"
-            )
-        ) {
-            return;
-        }
-
-        if (
-            !window.confirm(
-                "This cannot be undone. Continue?"
-            )
-        ) {
-            return;
-        }
-
-        if (currentUser) {
-            localStorage.removeItem(
-                getStorageKey(
-                    currentUser.id
-                )
-            );
-        }
-
-        state =
-            structuredClone(
-                defaultState
-            );
-
-        if (currentUser) {
-            try {
-                const {
-                    error
-                } =
-                    await supabase
-                        .from(
-                            STATE_TABLE
-                        )
-                        .upsert(
-                            {
-                                user_id:
-                                    currentUser.id,
-
-                                data:
-                                    state,
-
-                                updated_at:
-                                    new Date().toISOString()
-                            },
-
-                            {
-                                onConflict:
-                                    "user_id"
-                            }
-                        );
-
-                if (error) {
-                    throw error;
+${escapeHtml(
+                                item.explanation
+                            )}
+</p>
+`
+                            : ""
+                        }
+</fieldset>
+`;
                 }
+            )
+            .join("");
 
-            } catch (error) {
-                console.error(
-                    "Could not reset cloud state.",
-                    error
-                );
+    backdrop.innerHTML =
+        `
+<div class="modal-card assessment-card">
+<div class="modal-header">
+<div>
+<p class="eyebrow">
+Session results
+</p>
 
-                showToast(
-                    "Local data was reset, but the cloud copy could not be cleared. Try again when you're back online.",
-                    "error"
-                );
+<h3>
+Review your answers
+</h3>
+</div>
+</div>
+
+<div class="assessment-summary-status ${objectiveScore >=
+            3
+            ? "match"
+            : "mismatch"
+        }">
+<strong>
+Grade:
+${objectiveScore}/${assessment.objectiveQuestions.length}
+</strong>
+
+<p>
+Go through each question below to see the correct answer and why it's correct.
+</p>
+</div>
+
+<section class="assessment-section">
+<h4>
+Objective questions
+</h4>
+
+<div class="assessment-question-list">
+${objectiveHtml}
+</div>
+</section>
+
+<div class="modal-actions">
+<button
+class="primary-button"
+id="closeAssessmentResultsButton"
+>
+Continue
+</button>
+</div>
+</div>
+`;
+
+    document.body.appendChild(
+        backdrop
+    );
+
+    openModal(
+        backdrop
+    );
+
+    const finish =
+        () => {
+            closeModal(
+                backdrop
+            );
+
+            backdrop.remove();
+
+            if (
+                typeof onContinue ===
+                "function"
+            ) {
+                onContinue();
+            }
+        };
+
+    backdrop
+        .querySelector(
+            "#closeAssessmentResultsButton"
+        )
+        .addEventListener(
+            "click",
+            finish
+        );
+
+    backdrop.addEventListener(
+        "mousedown",
+        event => {
+            if (
+                event.target ===
+                backdrop
+            ) {
+                finish();
             }
         }
+    );
+}
 
+function submitAssessment(
+    event
+) {
+    event.preventDefault();
+
+    if (
+        !timer.pendingCompletion ||
+        !timer.pendingAssessment
+    ) {
+        return;
+    }
+
+    const {
+        assessment,
+        summary,
+        resourceId
+    } =
+        timer.pendingAssessment;
+
+    const objectiveAnswers =
+        assessment.objectiveQuestions.map(
+            (
+                _,
+                index
+            ) => {
+                const selected =
+                    els.assessmentForm.querySelector(
+                        `input[name="objective-${index}"]:checked`
+                    );
+
+                return selected
+                    ? Number(
+                        selected.value
+                    )
+                    : null;
+            }
+        );
+
+    if (
+        objectiveAnswers.some(
+            answer =>
+                answer ===
+                null
+        )
+    ) {
+        els.assessmentValidation.textContent =
+            `Answer all ${assessment.objectiveQuestions.length} questions before submitting.`;
+
+        return;
+    }
+
+    const objectiveScore =
+        objectiveAnswers.reduce(
+            (
+                score,
+                answer,
+                index
+            ) =>
+                score +
+                (
+                    answer ===
+                        assessment.objectiveQuestions[
+                            index
+                        ].correctAnswer
+                        ? 1
+                        : 0
+                ),
+            0
+        );
+
+    const task =
+        state.tasks.find(
+            item =>
+                item.id ===
+                timer.pendingCompletion.taskId
+        );
+
+    const session = {
+        id:
+            crypto.randomUUID(),
+
+        ...timer.pendingCompletion,
+
+        taskTitle:
+            task?.title ||
+            "General study session",
+
+        resourceId,
+
+        reflection:
+            summary,
+
+        summaryAlignmentScore:
+            assessment.alignmentScore,
+
+        assessment: {
+            objectiveScore,
+
+            objectiveTotal:
+                assessment.objectiveQuestions.length,
+
+            objectiveAnswers,
+
+            objectiveQuestions:
+                assessment.objectiveQuestions
+        },
+
+        integrity:
+            timer.pendingCompletion.focusViolations ===
+                0 &&
+                timer.pendingCompletion.checksFailed ===
+                0
+                ? "verified"
+                : "flagged"
+    };
+
+    state.sessions.push(
+        session
+    );
+
+    if (
+        task &&
+        task.status ===
+        "todo"
+    ) {
+        task.status =
+            "inProgress";
+    }
+
+    saveState();
+
+    closeModal(
+        els.assessmentModal
+    );
+
+    timer.pendingCompletion =
+        null;
+
+    timer.pendingAssessment =
+        null;
+
+    openAssessmentResultsModal(
+        assessment,
+        objectiveAnswers,
+        objectiveScore,
+
+        () => {
+            const nextMode =
+                timer.cycle >=
+                    state.settings.cyclesBeforeLongBreak
+                    ? "longBreak"
+                    : "shortBreak";
+
+            if (
+                timer.cycle >=
+                state.settings.cyclesBeforeLongBreak
+            ) {
+                timer.cycle =
+                    1;
+
+            } else {
+                timer.cycle +=
+                    1;
+            }
+
+            setTimerMode(
+                nextMode,
+                true
+            );
+
+            els.sessionGoal.value =
+                "";
+
+            els.goalCount.textContent =
+                "0";
+
+            renderAll();
+
+            showToast(
+                `Verified session logged. Grade: ${objectiveScore}/${assessment.objectiveQuestions.length}.`
+            );
+        }
+    );
+}
+
+function backToReflection() {
+    closeModal(
+        els.assessmentModal
+    );
+
+    openModal(
+        els.reflectionModal
+    );
+
+    timer.pendingAssessment =
+        null;
+
+    validateReflection();
+}
+
+function discardSession() {
+    if (
+        !window.confirm(
+            "Discard this completed session without logging it?"
+        )
+    ) {
+        return;
+    }
+
+    timer.pendingCompletion =
+        null;
+
+    timer.pendingAssessment =
+        null;
+
+    timer.backgroundPrep =
+        null;
+
+    closeModal(
+        els.reflectionModal
+    );
+
+    const nextMode =
+        timer.cycle >=
+            state.settings.cyclesBeforeLongBreak
+            ? "longBreak"
+            : "shortBreak";
+
+    if (
+        timer.cycle >=
+        state.settings.cyclesBeforeLongBreak
+    ) {
         timer.cycle =
             1;
 
+    } else {
+        timer.cycle +=
+            1;
+    }
+
+    setTimerMode(
+        nextMode,
+        true
+    );
+
+    showToast(
+        "Session discarded.",
+        "warning"
+    );
+}
+
+// -------------------------------------------------------------
+// PROGRESS
+// -------------------------------------------------------------
+
+function renderProgress() {
+    const totalMinutes =
+        state.sessions.reduce(
+            (
+                sum,
+                session
+            ) =>
+                sum +
+                session.durationMinutes,
+            0
+        );
+
+    const streaks =
+        calculateStreaks();
+
+    const completed =
+        state.tasks.filter(
+            task =>
+                task.status ===
+                "done"
+        ).length;
+
+    const completionRate =
+        state.tasks.length
+            ? Math.round(
+                (
+                    completed /
+                    state.tasks.length
+                ) *
+                100
+            )
+            : 0;
+
+    const weeklyMinutes =
+        getWeeklyMinutes();
+
+    const weeklyPercent =
+        Math.min(
+            100,
+
+            Math.round(
+                (
+                    weeklyMinutes /
+                    state.settings.weeklyGoalMinutes
+                ) *
+                100
+            )
+        );
+
+    els.progressStreak.textContent =
+        streaks.current;
+
+    els.longestStreak.textContent =
+        streaks.longest;
+
+    els.progressTotalTime.textContent =
+        formatMinutes(
+            totalMinutes
+        );
+
+    els.completionRate.textContent =
+        `${completionRate}%`;
+
+    els.weeklyGoalPercent.textContent =
+        `${weeklyPercent}%`;
+
+    els.weeklyGoalCaption.textContent =
+        `${Math.round(
+            weeklyMinutes
+        )} of ${state.settings.weeklyGoalMinutes} minutes`;
+
+    els.goalRing.style.setProperty(
+        "--goal-progress",
+        `${weeklyPercent * 3.6}deg`
+    );
+
+    renderBarChart(
+        els.progressChart,
+        getLastSevenDays(),
+        true
+    );
+
+    renderHistory();
+}
+
+function renderHistory() {
+    const sessions = [
+        ...state.sessions
+    ].sort(
+        (
+            a,
+            b
+        ) =>
+            b.completedAt -
+            a.completedAt
+    );
+
+    els.historyBody.innerHTML =
+        sessions.length
+            ? sessions
+                .map(
+                    session => `
+<tr>
+<td>
+${formatDate(
+                        session.completedAt
+                    )}
+</td>
+
+<td>
+${escapeHtml(
+                        session.taskTitle ||
+                        "General study session"
+                    )}
+</td>
+
+<td>
+${session.durationMinutes} min
+</td>
+
+<td>
+<span
+class="integrity-badge ${session.integrity ===
+                            "verified"
+                            ? "integrity-good"
+                            : "integrity-flagged"
+                        }"
+>
+${session.integrity ===
+                            "verified"
+                            ? "Verified"
+                            : "Flagged"
+                        }
+</span>
+</td>
+
+<td>
+<button
+class="text-button"
+data-view-reflection="${session.id}"
+>
+View
+</button>
+
+${session.assessment
+                            ? `
+<button
+class="text-button"
+data-view-results="${session.id}"
+>
+Results
+</button>
+`
+                            : ""
+                        }
+</td>
+</tr>
+`
+                )
+                .join("")
+            : `
+<tr>
+<td colspan="5">
+<div class="empty-state">
+No completed sessions yet.
+</div>
+</td>
+</tr>
+`;
+}
+
+function viewReflection(
+    id
+) {
+    const session =
+        state.sessions.find(
+            item =>
+                item.id ===
+                id
+        );
+
+    if (!session) {
+        return;
+    }
+
+    els.reflectionViewTitle.textContent =
+        session.taskTitle ||
+        "Session reflection";
+
+    els.reflectionViewText.textContent =
+        session.reflection;
+
+    openModal(
+        els.reflectionViewModal
+    );
+}
+
+function viewSessionResults(
+    id
+) {
+    const session =
+        state.sessions.find(
+            item =>
+                item.id ===
+                id
+        );
+
+    if (
+        !session ||
+        !session.assessment
+    ) {
+        return;
+    }
+
+    const assessment = {
+        objectiveQuestions:
+            session.assessment.objectiveQuestions
+    };
+
+    openAssessmentResultsModal(
+        assessment,
+
+        session.assessment.objectiveAnswers,
+
+        session.assessment.objectiveScore,
+
+        () => { }
+    );
+}// -------------------------------------------------------------
+// SETTINGS
+// -------------------------------------------------------------
+
+function populateSettings() {
+    els.focusMinutesSetting.value =
+        state.settings.focusMinutes;
+
+    els.shortBreakSetting.value =
+        state.settings.shortBreakMinutes;
+
+    els.longBreakSetting.value =
+        state.settings.longBreakMinutes;
+
+    els.cyclesSetting.value =
+        state.settings.cyclesBeforeLongBreak;
+
+    els.weeklyGoalSetting.value =
+        state.settings.weeklyGoalMinutes;
+
+    state.settings.focusTracking =
+        true;
+
+    state.settings.verificationChecks =
+        true;
+
+    state.settings.sound =
+        true;
+
+    els.focusTrackingSetting.checked =
+        true;
+
+    els.verificationSetting.checked =
+        true;
+
+    els.soundSetting.checked =
+        true;
+}
+
+function saveSettings() {
+    const next = {
+        focusMinutes:
+            Number(
+                els.focusMinutesSetting.value
+            ),
+
+        shortBreakMinutes:
+            Number(
+                els.shortBreakSetting.value
+            ),
+
+        longBreakMinutes:
+            Number(
+                els.longBreakSetting.value
+            ),
+
+        cyclesBeforeLongBreak:
+            Number(
+                els.cyclesSetting.value
+            ),
+
+        weeklyGoalMinutes:
+            Number(
+                els.weeklyGoalSetting.value
+            ),
+
+        focusTracking:
+            true,
+
+        verificationChecks:
+            true,
+
+        sound:
+            true,
+
+        theme:
+            state.settings.theme
+    };
+
+    const valid =
+        next.focusMinutes >=
+        1 &&
+        next.focusMinutes <=
+        180 &&
+
+        next.shortBreakMinutes >=
+        1 &&
+        next.shortBreakMinutes <=
+        60 &&
+
+        next.longBreakMinutes >=
+        1 &&
+        next.longBreakMinutes <=
+        90 &&
+
+        next.cyclesBeforeLongBreak >=
+        1 &&
+        next.cyclesBeforeLongBreak <=
+        10 &&
+
+        next.weeklyGoalMinutes >=
+        30 &&
+        next.weeklyGoalMinutes <=
+        10080;
+
+    if (!valid) {
+        showToast(
+            "Please check the timer and weekly goal values.",
+            "error"
+        );
+
+        return;
+    }
+
+    state.settings =
+        next;
+
+    saveState();
+
+    if (!timer.running) {
         setTimerMode(
-            "focus",
+            timer.mode,
             true
         );
+    }
 
-        populateSettings();
-        applyTheme();
-        renderAll();
+    renderAll();
 
-        navigate(
-            "dashboard"
-        );
+    showToast(
+        "Settings saved."
+    );
+}
 
-        showToast(
-            "All user app data has been reset.",
-            "warning"
+async function resetAllData() {
+    if (
+        !window.confirm(
+            "Reset every task, session, and setting stored for this user?"
+        )
+    ) {
+        return;
+    }
+
+    if (
+        !window.confirm(
+            "This cannot be undone. Continue?"
+        )
+    ) {
+        return;
+    }
+
+    if (currentUser) {
+        localStorage.removeItem(
+            getStorageKey(
+                currentUser.id
+            )
         );
     }
 
-    // -------------------------------------------------------------
-    // BACKBLAZE B2
-    // -------------------------------------------------------------
+    state =
+        structuredClone(
+            defaultState
+        );
 
-    function sanitiseFileName(
-        name = "file"
-    ) {
-        const cleaned =
-            name.replace(
-                /[^a-zA-Z0-9._-]/g,
-                "_"
+    if (currentUser) {
+        try {
+            const {
+                error
+            } =
+                await supabase
+                    .from(
+                        STATE_TABLE
+                    )
+                    .upsert(
+                        {
+                            user_id:
+                                currentUser.id,
+
+                            data:
+                                state,
+
+                            updated_at:
+                                new Date().toISOString()
+                        },
+
+                        {
+                            onConflict:
+                                "user_id"
+                        }
+                    );
+
+            if (error) {
+                throw error;
+            }
+
+        } catch (error) {
+            console.error(
+                "Could not reset cloud state.",
+                error
             );
 
-        return (
-            cleaned.slice(
-                -140
-            ) ||
-            "file"
+            showToast(
+                "Local data was reset, but the cloud copy could not be cleared. Try again when you're back online.",
+                "error"
+            );
+        }
+    }
+
+    timer.cycle =
+        1;
+
+    setTimerMode(
+        "focus",
+        true
+    );
+
+    populateSettings();
+    applyTheme();
+    renderAll();
+
+    navigate(
+        "dashboard"
+    );
+
+    showToast(
+        "All user app data has been reset.",
+        "warning"
+    );
+}
+
+// -------------------------------------------------------------
+// BACKBLAZE B2
+// -------------------------------------------------------------
+
+function sanitiseFileName(
+    name = "file"
+) {
+    const cleaned =
+        name.replace(
+            /[^a-zA-Z0-9._-]/g,
+            "_"
+        );
+
+    return (
+        cleaned.slice(
+            -140
+        ) ||
+        "file"
+    );
+}
+
+function resourceStoragePath(
+    userId,
+    id,
+    fileName
+) {
+    return `${userId}/${id}-${sanitiseFileName(
+        fileName
+    )}`;
+}
+
+const MAX_FILE_SIZE_BYTES =
+    50 *
+    1024 *
+    1024;
+
+async function b2Presign(
+    action,
+    payload
+) {
+    const {
+        data,
+        error
+    } =
+        await supabase.functions.invoke(
+            "b2-presign",
+            {
+                body: {
+                    action,
+                    ...payload
+                }
+            }
+        );
+
+    if (error) {
+        let detail =
+            "";
+
+        try {
+            const context =
+                error.context;
+
+            if (
+                context &&
+                typeof context.json ===
+                "function"
+            ) {
+                const body =
+                    await context.json();
+
+                detail =
+                    body?.error ||
+                    "";
+            }
+
+        } catch (_) {
+        }
+
+        throw new Error(
+            detail ||
+            error.message ||
+            "Could not reach file storage."
         );
     }
 
-    function resourceStoragePath(
-        userId,
-        id,
-        fileName
+    if (
+        data &&
+        data.error
     ) {
-        return `${userId}/${id}-${sanitiseFileName(
-            fileName
-        )}`;
+        throw new Error(
+            data.error
+        );
     }
 
-    const MAX_FILE_SIZE_BYTES =
-        50 *
-        1024 *
-        1024;
+    return data;
+}
 
-    async function b2Presign(
-        action,
-        payload
+async function uploadResourceFile(
+    id,
+    file,
+    onProgress
+) {
+    if (!currentUser) {
+        throw new Error(
+            "You must be signed in to upload a resource."
+        );
+    }
+
+    const {
+        url
+    } =
+        await b2Presign(
+            "upload",
+            {
+                resourceId:
+                    id,
+
+                fileName:
+                    file.name
+            }
+        );
+
+    await new Promise(
+        (
+            resolve,
+            reject
+        ) => {
+            const xhr =
+                new XMLHttpRequest();
+
+            xhr.open(
+                "PUT",
+                url,
+                true
+            );
+
+            xhr.setRequestHeader(
+                "Content-Type",
+                file.type ||
+                "application/octet-stream"
+            );
+
+            if (
+                xhr.upload &&
+                typeof onProgress ===
+                "function"
+            ) {
+                xhr.upload.addEventListener(
+                    "progress",
+                    event => {
+                        if (
+                            event.lengthComputable
+                        ) {
+                            onProgress(
+                                Math.round(
+                                    (
+                                        event.loaded /
+                                        event.total
+                                    ) *
+                                    100
+                                )
+                            );
+                        }
+                    }
+                );
+            }
+
+            xhr.onload =
+                () => {
+                    if (
+                        xhr.status >=
+                        200 &&
+                        xhr.status <
+                        300
+                    ) {
+                        resolve();
+
+                    } else {
+                        reject(
+                            new Error(
+                                `Upload failed (status ${xhr.status}). Check your connection and try again.`
+                            )
+                        );
+                    }
+                };
+
+            xhr.onerror =
+                () =>
+                    reject(
+                        new Error(
+                            "Upload failed. Check your connection and try again."
+                        )
+                    );
+
+            xhr.send(
+                file
+            );
+        }
+    );
+
+    const path =
+        resourceStoragePath(
+            currentUser.id,
+            id,
+            file.name
+        );
+
+    return {
+        storagePath:
+            path,
+
+        storageProvider:
+            "b2"
+    };
+}
+
+async function getResourceFileBlob(
+    resource
+) {
+    if (
+        !resource?.storagePath
     ) {
+        return null;
+    }
+
+    try {
+        if (
+            resource.storageProvider ===
+            "b2"
+        ) {
+            const {
+                url
+            } =
+                await b2Presign(
+                    "download",
+                    {
+                        path:
+                            resource.storagePath
+                    }
+                );
+
+            const response =
+                await fetch(
+                    url
+                );
+
+            if (!response.ok) {
+                throw new Error(
+                    `Download failed (status ${response.status}).`
+                );
+            }
+
+            return await response.blob();
+        }
+
         const {
             data,
             error
         } =
-            await supabase.functions.invoke(
-                "b2-presign",
-                {
-                    body: {
-                        action,
-                        ...payload
-                    }
-                }
-            );
+            await supabase.storage
+                .from(
+                    RESOURCE_BUCKET
+                )
+                .download(
+                    resource.storagePath
+                );
 
         if (error) {
-            let detail =
-                "";
-
-            try {
-                const context =
-                    error.context;
-
-                if (
-                    context &&
-                    typeof context.json ===
-                    "function"
-                ) {
-                    const body =
-                        await context.json();
-
-                    detail =
-                        body?.error ||
-                        "";
-                }
-
-            } catch (_) {
-            }
-
-            throw new Error(
-                detail ||
-                error.message ||
-                "Could not reach file storage."
-            );
-        }
-
-        if (
-            data &&
-            data.error
-        ) {
-            throw new Error(
-                data.error
-            );
+            throw error;
         }
 
         return data;
-    }
 
-    async function uploadResourceFile(
-        id,
-        file,
-        onProgress
-    ) {
-        if (!currentUser) {
-            throw new Error(
-                "You must be signed in to upload a resource."
-            );
-        }
-
-        const {
-            url
-        } =
-            await b2Presign(
-                "upload",
-                {
-                    resourceId:
-                        id,
-
-                    fileName:
-                        file.name
-                }
-            );
-
-        await new Promise(
-            (
-                resolve,
-                reject
-            ) => {
-                const xhr =
-                    new XMLHttpRequest();
-
-                xhr.open(
-                    "PUT",
-                    url,
-                    true
-                );
-
-                xhr.setRequestHeader(
-                    "Content-Type",
-                    file.type ||
-                    "application/octet-stream"
-                );
-
-                if (
-                    xhr.upload &&
-                    typeof onProgress ===
-                    "function"
-                ) {
-                    xhr.upload.addEventListener(
-                        "progress",
-                        event => {
-                            if (
-                                event.lengthComputable
-                            ) {
-                                onProgress(
-                                    Math.round(
-                                        (
-                                            event.loaded /
-                                            event.total
-                                        ) *
-                                        100
-                                    )
-                                );
-                            }
-                        }
-                    );
-                }
-
-                xhr.onload =
-                    () => {
-                        if (
-                            xhr.status >=
-                            200 &&
-                            xhr.status <
-                            300
-                        ) {
-                            resolve();
-
-                        } else {
-                            reject(
-                                new Error(
-                                    `Upload failed (status ${xhr.status}). Check your connection and try again.`
-                                )
-                            );
-                        }
-                    };
-
-                xhr.onerror =
-                    () =>
-                        reject(
-                            new Error(
-                                "Upload failed. Check your connection and try again."
-                            )
-                        );
-
-                xhr.send(
-                    file
-                );
-            }
+    } catch (error) {
+        console.warn(
+            "Could not download resource file from cloud storage.",
+            error
         );
 
-        const path =
-            resourceStoragePath(
-                currentUser.id,
-                id,
-                file.name
-            );
+        return null;
+    }
+}
 
-        return {
-            storagePath:
-                path,
-
-            storageProvider:
-                "b2"
-        };
+async function removeResourceFile(
+    resource
+) {
+    if (
+        !resource?.storagePath
+    ) {
+        return;
     }
 
-    async function getResourceFileBlob(
-        resource
-    ) {
+    try {
         if (
-            !resource?.storagePath
+            resource.storageProvider ===
+            "b2"
         ) {
-            return null;
+            await b2Presign(
+                "delete",
+                {
+                    path:
+                        resource.storagePath
+                }
+            );
+
+        } else {
+            const {
+                error
+            } =
+                await supabase.storage
+                    .from(
+                        RESOURCE_BUCKET
+                    )
+                    .remove([
+                        resource.storagePath
+                    ]);
+
+            if (error) {
+                throw error;
+            }
         }
 
-        try {
-            if (
-                resource.storageProvider ===
+    } catch (error) {
+        console.warn(
+            "Could not remove resource file from cloud storage.",
+            error
+        );
+    }
+}
+
+async function migrateResourcesToB2() {
+    if (!currentUser) {
+        return;
+    }
+
+    const legacyResources =
+        state.resources.filter(
+            r =>
+                r.storagePath &&
+                r.storageProvider !==
                 "b2"
-            ) {
-                const {
-                    url
-                } =
-                    await b2Presign(
-                        "download",
-                        {
-                            path:
-                                resource.storagePath
-                        }
-                    );
+        );
 
-                const response =
-                    await fetch(
-                        url
-                    );
+    if (
+        !legacyResources.length
+    ) {
+        showToast(
+            "No resources need migrating — everything is already on Backblaze B2."
+        );
 
-                if (!response.ok) {
-                    throw new Error(
-                        `Download failed (status ${response.status}).`
-                    );
-                }
+        return;
+    }
 
-                return await response.blob();
-            }
+    if (
+        !window.confirm(
+            `Migrate ${legacyResources.length} file(s) from Supabase Storage to Backblaze B2? This may take a while depending on file sizes.`
+        )
+    ) {
+        return;
+    }
 
+    let migrated = 0;
+    let failed = 0;
+
+    for (
+        const resource of
+        legacyResources
+    ) {
+        try {
             const {
-                data,
-                error
+                data: file,
+                error: downloadError
             } =
                 await supabase.storage
                     .from(
@@ -8055,1144 +8406,905 @@ Rules:
                         resource.storagePath
                     );
 
-            if (error) {
-                throw error;
+            if (
+                downloadError ||
+                !file
+            ) {
+                throw (
+                    downloadError ||
+                    new Error(
+                        "Empty file"
+                    )
+                );
             }
 
-            return data;
+            const fileForUpload =
+                new File(
+                    [
+                        file
+                    ],
 
-        } catch (error) {
-            console.warn(
-                "Could not download resource file from cloud storage.",
-                error
-            );
+                    resource.fileName ||
+                    "file",
 
-            return null;
-        }
-    }
-
-    async function removeResourceFile(
-        resource
-    ) {
-        if (
-            !resource?.storagePath
-        ) {
-            return;
-        }
-
-        try {
-            if (
-                resource.storageProvider ===
-                "b2"
-            ) {
-                await b2Presign(
-                    "delete",
                     {
-                        path:
-                            resource.storagePath
+                        type:
+                            resource.mimeType ||
+                            file.type ||
+                            "application/octet-stream"
                     }
                 );
 
-            } else {
-                const {
-                    error
-                } =
-                    await supabase.storage
-                        .from(
-                            RESOURCE_BUCKET
-                        )
-                        .remove([
-                            resource.storagePath
-                        ]);
-
-                if (error) {
-                    throw error;
-                }
-            }
-
-        } catch (error) {
-            console.warn(
-                "Could not remove resource file from cloud storage.",
-                error
-            );
-        }
-    }
-
-    async function migrateResourcesToB2() {
-        if (!currentUser) {
-            return;
-        }
-
-        const legacyResources =
-            state.resources.filter(
-                r =>
-                    r.storagePath &&
-                    r.storageProvider !==
-                    "b2"
-            );
-
-        if (
-            !legacyResources.length
-        ) {
-            showToast(
-                "No resources need migrating — everything is already on Backblaze B2."
-            );
-
-            return;
-        }
-
-        if (
-            !window.confirm(
-                `Migrate ${legacyResources.length} file(s) from Supabase Storage to Backblaze B2? This may take a while depending on file sizes.`
-            )
-        ) {
-            return;
-        }
-
-        let migrated = 0;
-        let failed = 0;
-
-        for (
-            const resource of
-            legacyResources
-        ) {
-            try {
-                const {
-                    data: file,
-                    error: downloadError
-                } =
-                    await supabase.storage
-                        .from(
-                            RESOURCE_BUCKET
-                        )
-                        .download(
-                            resource.storagePath
-                        );
-
-                if (
-                    downloadError ||
-                    !file
-                ) {
-                    throw (
-                        downloadError ||
-                        new Error(
-                            "Empty file"
-                        )
-                    );
-                }
-
-                const fileForUpload =
-                    new File(
-                        [
-                            file
-                        ],
-
-                        resource.fileName ||
-                        "file",
-
-                        {
-                            type:
-                                resource.mimeType ||
-                                file.type ||
-                                "application/octet-stream"
-                        }
-                    );
-
-                const {
-                    storagePath,
-                    storageProvider
-                } =
-                    await uploadResourceFile(
-                        resource.id,
-                        fileForUpload
-                    );
-
-                await supabase.storage
-                    .from(
-                        RESOURCE_BUCKET
-                    )
-                    .remove([
-                        resource.storagePath
-                    ]);
-
-                resource.storagePath =
-                    storagePath;
-
-                resource.storageProvider =
-                    storageProvider;
-
-                migrated += 1;
-
-            } catch (error) {
-                console.error(
-                    `Could not migrate resource "${resource.title}".`,
-                    error
+            const {
+                storagePath,
+                storageProvider
+            } =
+                await uploadResourceFile(
+                    resource.id,
+                    fileForUpload
                 );
 
-                failed += 1;
-            }
-        }
+            await supabase.storage
+                .from(
+                    RESOURCE_BUCKET
+                )
+                .remove([
+                    resource.storagePath
+                ]);
 
-        saveState();
-        renderAll();
+            resource.storagePath =
+                storagePath;
 
-        if (failed) {
-            showToast(
-                `Migrated ${migrated} file(s) to B2. ${failed} failed and remain on Supabase Storage — try again later.`,
-                "warning"
+            resource.storageProvider =
+                storageProvider;
+
+            migrated += 1;
+
+        } catch (error) {
+            console.error(
+                `Could not migrate resource "${resource.title}".`,
+                error
             );
 
-        } else {
-            showToast(
-                `All ${migrated} file(s) migrated to Backblaze B2.`
-            );
+            failed += 1;
         }
     }
 
-    function getResource(id) {
-        return state.resources.find(
-            item =>
-                item.id ===
-                id
+    saveState();
+    renderAll();
+
+    if (failed) {
+        showToast(
+            `Migrated ${migrated} file(s) to B2. ${failed} failed and remain on Supabase Storage — try again later.`,
+            "warning"
+        );
+
+    } else {
+        showToast(
+            `All ${migrated} file(s) migrated to Backblaze B2.`
         );
     }
+}
 
-    function toggleResourceFields() {
-        const isLink =
-            els.resourceKind.value ===
-            "link";
+function getResource(id) {
+    return state.resources.find(
+        item =>
+            item.id ===
+            id
+    );
+}
 
-        els.resourceFileGroup.classList.toggle(
-            "hidden",
-            isLink
-        );
+function toggleResourceFields() {
+    const isLink =
+        els.resourceKind.value ===
+        "link";
 
-        els.resourceUrlGroup.classList.toggle(
-            "hidden",
-            !isLink
-        );
-    }
+    els.resourceFileGroup.classList.toggle(
+        "hidden",
+        isLink
+    );
 
-    function fileKindLabel(
-        file
+    els.resourceUrlGroup.classList.toggle(
+        "hidden",
+        !isLink
+    );
+}
+
+function fileKindLabel(
+    file
+) {
+    const type =
+        file.type ||
+        "";
+
+    if (
+        type.startsWith(
+            "video/"
+        )
     ) {
-        const type =
-            file.type ||
-            "";
+        return {
+            icon:
+                "🎬",
 
-        if (
-            type.startsWith(
-                "video/"
-            )
-        ) {
-            return {
-                icon:
-                    "🎬",
+            label:
+                "Video selected"
+        };
+    }
 
-                label:
-                    "Video selected"
-            };
-        }
+    if (
+        type.startsWith(
+            "audio/"
+        )
+    ) {
+        return {
+            icon:
+                "🎧",
 
-        if (
-            type.startsWith(
-                "audio/"
-            )
-        ) {
-            return {
-                icon:
-                    "🎧",
+            label:
+                "Audio selected"
+        };
+    }
 
-                label:
-                    "Audio selected"
-            };
-        }
+    if (
+        type.startsWith(
+            "image/"
+        )
+    ) {
+        return {
+            icon:
+                "🖼️",
 
-        if (
-            type.startsWith(
-                "image/"
-            )
-        ) {
-            return {
-                icon:
-                    "🖼️",
+            label:
+                "Image selected"
+        };
+    }
 
-                label:
-                    "Image selected"
-            };
-        }
-
-        if (
-            type ===
-            "application/pdf"
-        ) {
-            return {
-                icon:
-                    "📄",
-
-                label:
-                    "PDF selected"
-            };
-        }
-
-        if (
-            type ===
-            "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
-            /\.docx$/i.test(
-                file.name ||
-                ""
-            )
-        ) {
-            return {
-                icon:
-                    "📝",
-
-                label:
-                    "Word document selected"
-            };
-        }
-
+    if (
+        type ===
+        "application/pdf"
+    ) {
         return {
             icon:
                 "📄",
 
             label:
-                "File selected"
+                "PDF selected"
         };
     }
 
-    function updateFileDropDisplay() {
-        if (
-            !els.resourceFileDrop
-        ) {
-            return;
-        }
+    if (
+        type ===
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
+        /\.docx$/i.test(
+            file.name ||
+            ""
+        )
+    ) {
+        return {
+            icon:
+                "📝",
 
-        const file =
-            els.resourceFile.files[0];
+            label:
+                "Word document selected"
+        };
+    }
 
-        if (!file) {
-            els.resourceFileDrop.classList.remove(
-                "has-file"
-            );
+    return {
+        icon:
+            "📄",
 
-            els.resourceFileIcon.textContent =
-                "📎";
+        label:
+            "File selected"
+    };
+}
 
-            els.resourceFileLabel.textContent =
-                "Choose a document or video";
+function updateFileDropDisplay() {
+    if (
+        !els.resourceFileDrop
+    ) {
+        return;
+    }
 
-            els.resourceFileName.textContent =
-                "No file chosen";
+    const file =
+        els.resourceFile.files[0];
 
-            return;
-        }
-
-        const {
-            icon,
-            label
-        } =
-            fileKindLabel(
-                file
-            );
-
-        els.resourceFileDrop.classList.add(
+    if (!file) {
+        els.resourceFileDrop.classList.remove(
             "has-file"
         );
 
         els.resourceFileIcon.textContent =
-            icon;
+            "📎";
 
         els.resourceFileLabel.textContent =
-            label;
+            "Choose a document or video";
 
         els.resourceFileName.textContent =
-            `${file.name} · ${humanFileSize(
-                file.size
-            )}`;
+            "No file chosen";
+
+        return;
     }
 
-    function clearFileDrop() {
-        els.resourceFile.value =
-            "";
-
-        updateFileDropDisplay();
-    }
-
-    function bindFileDropEvents() {
-        if (
-            !els.resourceFileDrop
-        ) {
-            return;
-        }
-
-        els.resourceFile.addEventListener(
-            "change",
-            updateFileDropDisplay
+    const {
+        icon,
+        label
+    } =
+        fileKindLabel(
+            file
         );
 
-        els.resourceFileClear.addEventListener(
-            "click",
-            event => {
-                event.preventDefault();
-                event.stopPropagation();
+    els.resourceFileDrop.classList.add(
+        "has-file"
+    );
 
-                clearFileDrop();
-            }
-        );
-    }
+    els.resourceFileIcon.textContent =
+        icon;
 
-    async function saveResource(
-        event
+    els.resourceFileLabel.textContent =
+        label;
+
+    els.resourceFileName.textContent =
+        `${file.name} · ${humanFileSize(
+            file.size
+        )}`;
+}
+
+function clearFileDrop() {
+    els.resourceFile.value =
+        "";
+
+    updateFileDropDisplay();
+}
+
+function bindFileDropEvents() {
+    if (
+        !els.resourceFileDrop
     ) {
-        event.preventDefault();
+        return;
+    }
 
-        const kind =
-            els.resourceKind.value;
+    els.resourceFile.addEventListener(
+        "change",
+        updateFileDropDisplay
+    );
 
-        const file =
-            els.resourceFile.files[0];
+    els.resourceFileClear.addEventListener(
+        "click",
+        event => {
+            event.preventDefault();
+            event.stopPropagation();
 
-        const url =
-            els.resourceUrl.value.trim();
+            clearFileDrop();
+        }
+    );
+}
 
+async function saveResource(
+    event
+) {
+    event.preventDefault();
+
+    const kind =
+        els.resourceKind.value;
+
+    const file =
+        els.resourceFile.files[0];
+
+    const url =
+        els.resourceUrl.value.trim();
+
+    if (
+        kind ===
+        "file" &&
+        !file
+    ) {
+        showToast(
+            "Choose a document or video to upload.",
+            "error"
+        );
+
+        return;
+    }
+
+    if (
+        kind ===
+        "link" &&
+        !url
+    ) {
+        showToast(
+            "Enter a valid resource URL.",
+            "error"
+        );
+
+        return;
+    }
+
+    const id =
+        crypto.randomUUID();
+
+    let type =
+        "link";
+
+    let mimeType =
+        "";
+
+    let fileName =
+        "";
+
+    let fileSize =
+        0;
+
+    let storagePath =
+        "";
+
+    let storageProvider =
+        "";
+
+    if (file) {
         if (
-            kind ===
-            "file" &&
-            !file
+            file.size >
+            MAX_FILE_SIZE_BYTES
         ) {
             showToast(
-                "Choose a document or video to upload.",
+                `"${file.name}" is ${humanFileSize(
+                    file.size
+                )} — the study library's free-tier limit is 50 MB per file. Try a shorter/compressed video, or use a YouTube link instead.`,
                 "error"
             );
 
             return;
         }
 
-        if (
-            kind ===
-            "link" &&
-            !url
-        ) {
-            showToast(
-                "Enter a valid resource URL.",
-                "error"
-            );
+        mimeType =
+            file.type ||
+            "application/octet-stream";
 
-            return;
-        }
+        fileName =
+            file.name;
 
-        const id =
-            crypto.randomUUID();
+        fileSize =
+            file.size;
 
-        let type =
-            "link";
-
-        let mimeType =
-            "";
-
-        let fileName =
-            "";
-
-        let fileSize =
-            0;
-
-        let storagePath =
-            "";
-
-        let storageProvider =
-            "";
-
-        if (file) {
-            if (
-                file.size >
-                MAX_FILE_SIZE_BYTES
-            ) {
-                showToast(
-                    `"${file.name}" is ${humanFileSize(
-                        file.size
-                    )} — the study library's free-tier limit is 50 MB per file. Try a shorter/compressed video, or use a YouTube link instead.`,
-                    "error"
-                );
-
-                return;
-            }
-
-            mimeType =
-                file.type ||
-                "application/octet-stream";
-
-            fileName =
-                file.name;
-
-            fileSize =
-                file.size;
-
-            type =
-                mimeType.startsWith(
-                    "video/"
-                ) ||
+        type =
+            mimeType.startsWith(
+                "video/"
+            ) ||
                 mimeType.startsWith(
                     "audio/"
                 )
-                    ? "video"
-                    : "document";
+                ? "video"
+                : "document";
 
-            const submitButton =
-                els.resourceSubmitButton;
+        const submitButton =
+            els.resourceSubmitButton;
 
-            const originalLabel =
-                submitButton
-                    ? submitButton.textContent
-                    : "";
+        const originalLabel =
+            submitButton
+                ? submitButton.textContent
+                : "";
 
-            if (submitButton) {
-                submitButton.disabled =
-                    true;
-            }
-
-            try {
-                const uploadResult =
-                    await uploadResourceFile(
-                        id,
-                        file,
-
-                        percent => {
-                            if (submitButton) {
-                                submitButton.textContent =
-                                    `Uploading… ${percent}%`;
-                            }
-                        }
-                    );
-
-                storagePath =
-                    uploadResult.storagePath;
-
-                storageProvider =
-                    uploadResult.storageProvider;
-
-            } catch (error) {
-                console.error(
-                    error
-                );
-
-                showToast(
-                    "This file could not be uploaded to your cloud library. Check your connection and try again.",
-                    "error"
-                );
-
-                return;
-
-            } finally {
-                if (submitButton) {
-                    submitButton.disabled =
-                        false;
-
-                    submitButton.textContent =
-                        originalLabel;
-                }
-            }
+        if (submitButton) {
+            submitButton.disabled =
+                true;
         }
-
-        state.resources.unshift({
-            id,
-            title:
-                els.resourceTitle.value.trim(),
-
-            type,
-            kind,
-            url,
-            mimeType,
-            fileName,
-            fileSize,
-            storagePath,
-            storageProvider,
-
-            notes:
-                els.resourceNotes.value.trim(),
-
-            createdAt:
-                Date.now()
-        });
-
-        saveState();
-
-        closeModal(
-            els.resourceModal
-        );
-
-        renderAll();
-
-        showToast(
-            file
-                ? "Resource uploaded to your cloud library — available on every device."
-                : "Resource saved to your study library."
-        );
-    }
-
-    function resourceIcon(
-        resource
-    ) {
-        return resource.type ===
-            "video"
-                ? "🎬"
-                : resource.type ===
-                    "link"
-                    ? "🔗"
-                    : "📄";
-    }
-
-    function humanFileSize(
-        bytes = 0
-    ) {
-        if (!bytes) {
-            return "Web resource";
-        }
-
-        const units = [
-            "B",
-            "KB",
-            "MB",
-            "GB"
-        ];
-
-        let i = 0;
-        let n =
-            bytes;
-
-        while (
-            n >= 1024 &&
-            i < 3
-        ) {
-            n /= 1024;
-            i += 1;
-        }
-
-        return `${n.toFixed(
-            i
-                ? 1
-                : 0
-        )} ${units[i]}`;
-    }
-
-    function renderResources() {
-        const query =
-            (
-                els.resourceSearch?.value ||
-                ""
-            )
-                .trim()
-                .toLowerCase();
-
-        const filter =
-            els.resourceTypeFilter?.value ||
-            "all";
-
-        const resources =
-            state.resources.filter(
-                resource =>
-                    (
-                        !query ||
-                        `${resource.title} ${resource.notes} ${resource.fileName}`
-                            .toLowerCase()
-                            .includes(
-                                query
-                            )
-                    ) &&
-                    (
-                        filter ===
-                        "all" ||
-                        resource.type ===
-                        filter
-                    )
-            );
-
-        els.documentCount.textContent =
-            state.resources.filter(
-                r =>
-                    r.type ===
-                    "document"
-            ).length;
-
-        els.videoCount.textContent =
-            state.resources.filter(
-                r =>
-                    r.type ===
-                    "video"
-            ).length;
-
-        els.linkCount.textContent =
-            state.resources.filter(
-                r =>
-                    r.type ===
-                    "link"
-            ).length;
-
-        els.resourceGrid.innerHTML =
-            resources.length
-                ? resources
-                    .map(
-                        resource => {
-                            const progress =
-                                resource.readProgress;
-
-                            let progressHtml =
-                                "";
-
-                            let pct =
-                                null;
-
-                            let isComplete =
-                                false;
-
-                            if (
-                                progress?.kind ===
-                                "pdf" &&
-                                progress.totalPages
-                            ) {
-                                pct =
-                                    Math.round(
-                                        (
-                                            progress.maxPage /
-                                            progress.totalPages
-                                        ) *
-                                        100
-                                    );
-
-                                isComplete =
-                                    progress.maxPage >=
-                                    progress.totalPages;
-
-                                const label =
-                                    isComplete
-                                        ? `✓ Finished · read all ${progress.totalPages} pages`
-                                        : `${pct}% read · furthest page ${progress.maxPage} of ${progress.totalPages}`;
-
-                                progressHtml =
-                                    `
-                                    <div class="resource-progress${
-                                        isComplete
-                                            ? " is-complete"
-                                            : ""
-                                    }">
-                                        <span
-                                            style="width:${pct}%"
-                                        ></span>
-                                    </div>
-
-                                    <small class="resource-progress-label">
-                                        ${label}
-                                    </small>
-                                    `;
-
-                            } else if (
-                                (
-                                    progress?.kind ===
-                                    "docx" ||
-                                    progress?.kind ===
-                                    "text"
-                                ) &&
-                                typeof progress.maxPercent ===
-                                "number"
-                            ) {
-                                pct =
-                                    Math.round(
-                                        progress.maxPercent *
-                                        100
-                                    );
-
-                                isComplete =
-                                    progress.maxPercent >=
-                                    0.999;
-
-                                const label =
-                                    isComplete
-                                        ? "✓ Finished reading"
-                                        : `${pct}% read`;
-
-                                progressHtml =
-                                    `
-                                    <div class="resource-progress${
-                                        isComplete
-                                            ? " is-complete"
-                                            : ""
-                                    }">
-                                        <span
-                                            style="width:${pct}%"
-                                        ></span>
-                                    </div>
-
-                                    <small class="resource-progress-label">
-                                        ${label}
-                                    </small>
-                                    `;
-                            }
-
-                            const actionLabel =
-                                pct ===
-                                null
-                                    ? "Open & study"
-                                    : isComplete
-                                        ? "Review again"
-                                        : "Continue studying";
-
-                            return `
-                                <article class="resource-card">
-                                    <div class="resource-card__icon">
-                                        ${resourceIcon(
-                                            resource
-                                        )}
-                                    </div>
-
-                                    <div class="resource-card__content">
-                                        <span class="resource-type">
-                                            ${resource.type}
-                                        </span>
-
-                                        <h3>
-                                            ${escapeHtml(
-                                                resource.title
-                                            )}
-                                        </h3>
-
-                                        <p>
-                                            ${escapeHtml(
-                                                resource.notes ||
-                                                resource.fileName ||
-                                                "Ready to study"
-                                            )}
-                                        </p>
-
-                                        <small>
-                                            ${
-                                                resource.fileName
-                                                    ? humanFileSize(
-                                                        resource.fileSize
-                                                    )
-                                                    : "External link"
-                                            }
-                                        </small>
-
-                                        ${progressHtml}
-                                    </div>
-
-                                    <div class="resource-card__actions">
-                                        <button
-                                            class="primary-button"
-                                            data-open-resource="${resource.id}"
-                                        >
-                                            ${actionLabel}
-                                        </button>
-
-                                        <button
-                                            class="secondary-button"
-                                            data-plan-resource="${resource.id}"
-                                        >
-                                            Plan task
-                                        </button>
-
-                                        <button
-                                            class="danger-text-button"
-                                            data-delete-resource="${resource.id}"
-                                        >
-                                            Delete
-                                        </button>
-                                    </div>
-                                </article>
-                            `;
-                        }
-                    )
-                    .join("")
-                : `
-                    <div class="empty-state resource-empty">
-                        No resources yet. Upload a document, video, or add a learning link.
-                    </div>
-                `;
-
-        populateTaskResources();
-    }
-
-    function populateTaskResources() {
-        const current =
-            els.taskResource?.value ||
-            "";
-
-        if (
-            !els.taskResource
-        ) {
-            return;
-        }
-
-        els.taskResource.innerHTML =
-            `<option value="">No linked resource</option>${
-                state.resources
-                    .map(
-                        r =>
-                            `<option value="${r.id}">${escapeHtml(
-                                r.title
-                            )}</option>`
-                    )
-                    .join("")
-            }`;
-
-        if (
-            state.resources.some(
-                r =>
-                    r.id ===
-                    current
-            )
-        ) {
-            els.taskResource.value =
-                current;
-        }
-    }
-
-    function revokeBlobUrl() {
-        if (currentBlobUrl) {
-            URL.revokeObjectURL(
-                currentBlobUrl
-            );
-
-            currentBlobUrl =
-                null;
-        }
-    }
-
-    // -------------------------------------------------------------
-    // RESOURCE VIEWER
-    // -------------------------------------------------------------
-
-    let activeViewerCleanup =
-        null;
-
-    function isResourceViewerOpen() {
-        return Boolean(
-            timer.activeResourceId &&
-            els.studyWorkspace &&
-            !els.studyWorkspace.classList.contains(
-                "hidden"
-            )
-        );
-    }
-
-    function isTextLikeResource(
-        resource
-    ) {
-        return (
-            resource.mimeType.startsWith(
-                "text/"
-            ) ||
-            /\.(txt|md|csv|json|log)$/i.test(
-                resource.fileName ||
-                ""
-            )
-        );
-    }
-
-    function isDocxResource(
-        resource
-    ) {
-        return (
-            resource.mimeType ===
-            "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
-            /\.docx$/i.test(
-                resource.fileName ||
-                ""
-            )
-        );
-    }
-
-    function teardownResourceViewer() {
-        if (
-            typeof activeViewerCleanup ===
-            "function"
-        ) {
-            try {
-                activeViewerCleanup();
-
-            } catch (error) {
-                console.warn(
-                    "Viewer cleanup failed.",
-                    error
-                );
-            }
-        }
-
-        activeViewerCleanup =
-            null;
-
-        revokeBlobUrl();
-    }
-
-    async function openStudyResource(
-        id,
-        taskId = ""
-    ) {
-        const resource =
-            getResource(
-                id
-            );
-
-        if (!resource) {
-            showToast(
-                "That resource is no longer available.",
-                "error"
-            );
-
-            return;
-        }
-
-        teardownResourceViewer();
-
-        timer.activeResourceId =
-            resource.id;
-
-        els.workspaceTitle.textContent =
-            resource.title;
-
-        els.workspaceViewer.innerHTML =
-            `<div class="viewer-loading">Opening resource…</div>`;
-
-        els.studyWorkspace.classList.remove(
-            "hidden"
-        );
-
-        navigate(
-            "timer"
-        );
-
-        els.sessionTask.value =
-            taskId ||
-            "";
-
-        if (
-            resource.kind ===
-            "link"
-        ) {
-            renderLinkViewer(
-                resource
-            );
-
-            els.studyWorkspace.scrollIntoView({
-                behavior:
-                    "smooth",
-
-                block:
-                    "start"
-            });
-
-            return;
-        }
-
-        const file =
-            await getResourceFileBlob(
-                resource
-            );
-
-        if (!file) {
-            els.workspaceViewer.innerHTML =
-                `
-                <div class="empty-state">
-                    This file could not be loaded from your cloud library. Check your connection and try again.
-                </div>
-                `;
-
-            els.studyWorkspace.scrollIntoView({
-                behavior:
-                    "smooth",
-
-                block:
-                    "start"
-            });
-
-            return;
-        }
-
-        currentBlobUrl =
-            URL.createObjectURL(
-                file
-            );
 
         try {
-            if (
-                resource.mimeType ===
-                "application/pdf"
-            ) {
-                await renderPdfViewer(
-                    resource,
-                    file
+            const uploadResult =
+                await uploadResourceFile(
+                    id,
+                    file,
+
+                    percent => {
+                        if (submitButton) {
+                            submitButton.textContent =
+                                `Uploading… ${percent}%`;
+                        }
+                    }
                 );
 
-            } else if (
-                resource.mimeType.startsWith(
-                    "image/"
-                )
-            ) {
-                renderImageViewer(
-                    resource,
-                    currentBlobUrl
-                );
+            storagePath =
+                uploadResult.storagePath;
 
-            } else if (
-                resource.mimeType.startsWith(
-                    "video/"
-                )
-            ) {
-                renderVideoViewer(
-                    resource,
-                    currentBlobUrl
-                );
-
-            } else if (
-                resource.mimeType.startsWith(
-                    "audio/"
-                )
-            ) {
-                renderAudioViewer(
-                    resource,
-                    currentBlobUrl
-                );
-
-            } else if (
-                isDocxResource(
-                    resource
-                )
-            ) {
-                await renderDocxViewer(
-                    resource,
-                    file
-                );
-
-            } else if (
-                isTextLikeResource(
-                    resource
-                )
-            ) {
-                await renderTextViewer(
-                    resource,
-                    file
-                );
-
-            } else {
-                renderUnsupportedViewer(
-                    resource,
-                    currentBlobUrl,
-                    false
-                );
-            }
+            storageProvider =
+                uploadResult.storageProvider;
 
         } catch (error) {
-            console.warn(
-                "Resource viewer failed to render — falling back to a download option.",
+            console.error(
                 error
             );
 
-            renderUnsupportedViewer(
-                resource,
-                currentBlobUrl,
-                true
+            showToast(
+                "This file could not be uploaded to your cloud library. Check your connection and try again.",
+                "error"
+            );
+
+            return;
+
+        } finally {
+            if (submitButton) {
+                submitButton.disabled =
+                    false;
+
+                submitButton.textContent =
+                    originalLabel;
+            }
+        }
+    }
+
+    state.resources.unshift({
+        id,
+
+        title:
+            els.resourceTitle.value.trim(),
+
+        type,
+        kind,
+        url,
+        mimeType,
+        fileName,
+        fileSize,
+        storagePath,
+        storageProvider,
+
+        notes:
+            els.resourceNotes.value.trim(),
+
+        createdAt:
+            Date.now()
+    });
+
+    saveState();
+
+    closeModal(
+        els.resourceModal
+    );
+
+    renderAll();
+
+    showToast(
+        file
+            ? "Resource uploaded to your cloud library — available on every device."
+            : "Resource saved to your study library."
+    );
+}
+
+function resourceIcon(
+    resource
+) {
+    return resource.type ===
+        "video"
+        ? "🎬"
+        : resource.type ===
+            "link"
+            ? "🔗"
+            : "📄";
+}
+
+function humanFileSize(
+    bytes = 0
+) {
+    if (!bytes) {
+        return "Web resource";
+    }
+
+    const units = [
+        "B",
+        "KB",
+        "MB",
+        "GB"
+    ];
+
+    let i = 0;
+
+    let n =
+        bytes;
+
+    while (
+        n >= 1024 &&
+        i < 3
+    ) {
+        n /= 1024;
+        i += 1;
+    }
+
+    return `${n.toFixed(
+        i
+            ? 1
+            : 0
+    )} ${units[i]}`;
+} function renderResources() {
+    const query =
+        (
+            els.resourceSearch?.value ||
+            ""
+        )
+            .trim()
+            .toLowerCase();
+
+    const filter =
+        els.resourceTypeFilter?.value ||
+        "all";
+
+    const resources =
+        state.resources.filter(
+            resource =>
+                (
+                    !query ||
+                    `${resource.title} ${resource.notes} ${resource.fileName}`
+                        .toLowerCase()
+                        .includes(
+                            query
+                        )
+                ) &&
+                (
+                    filter ===
+                    "all" ||
+                    resource.type ===
+                    filter
+                )
+        );
+
+    els.documentCount.textContent =
+        state.resources.filter(
+            r =>
+                r.type ===
+                "document"
+        ).length;
+
+    els.videoCount.textContent =
+        state.resources.filter(
+            r =>
+                r.type ===
+                "video"
+        ).length;
+
+    els.linkCount.textContent =
+        state.resources.filter(
+            r =>
+                r.type ===
+                "link"
+        ).length;
+
+    els.resourceGrid.innerHTML =
+        resources.length
+            ? resources
+                .map(
+                    resource => {
+                        const progress =
+                            resource.readProgress;
+
+                        let progressHtml =
+                            "";
+
+                        let pct =
+                            null;
+
+                        let isComplete =
+                            false;
+
+                        if (
+                            progress?.kind ===
+                            "pdf" &&
+                            progress.totalPages
+                        ) {
+                            pct =
+                                Math.round(
+                                    (
+                                        progress.maxPage /
+                                        progress.totalPages
+                                    ) *
+                                    100
+                                );
+
+                            isComplete =
+                                progress.maxPage >=
+                                progress.totalPages;
+
+                            const label =
+                                isComplete
+                                    ? `✓ Finished · read all ${progress.totalPages} pages`
+                                    : `${pct}% read · furthest page ${progress.maxPage} of ${progress.totalPages}`;
+
+                            progressHtml =
+                                `
+                                <div class="resource-progress${isComplete
+                                    ? " is-complete"
+                                    : ""
+                                }">
+                                    <span
+                                        style="width:${pct}%"
+                                    ></span>
+                                </div>
+
+                                <small class="resource-progress-label">
+                                    ${label}
+                                </small>
+                                `;
+
+                        } else if (
+                            (
+                                progress?.kind ===
+                                "docx" ||
+                                progress?.kind ===
+                                "text"
+                            ) &&
+                            typeof progress.maxPercent ===
+                            "number"
+                        ) {
+                            pct =
+                                Math.round(
+                                    progress.maxPercent *
+                                    100
+                                );
+
+                            isComplete =
+                                progress.maxPercent >=
+                                0.999;
+
+                            const label =
+                                isComplete
+                                    ? "✓ Finished reading"
+                                    : `${pct}% read`;
+
+                            progressHtml =
+                                `
+                                <div class="resource-progress${isComplete
+                                    ? " is-complete"
+                                    : ""
+                                }">
+                                    <span
+                                        style="width:${pct}%"
+                                    ></span>
+                                </div>
+
+                                <small class="resource-progress-label">
+                                    ${label}
+                                </small>
+                                `;
+                        }
+
+                        const actionLabel =
+                            pct ===
+                                null
+                                ? "Open & study"
+                                : isComplete
+                                    ? "Review again"
+                                    : "Continue studying";
+
+                        return `
+                        <article class="resource-card">
+                            <div class="resource-card__icon">
+                                ${resourceIcon(
+                            resource
+                        )}
+                            </div>
+
+                            <div class="resource-card__content">
+                                <span class="resource-type">
+                                    ${resource.type}
+                                </span>
+
+                                <h3>
+                                    ${escapeHtml(
+                            resource.title
+                        )}
+                                </h3>
+
+                                <p>
+                                    ${escapeHtml(
+                            resource.notes ||
+                            resource.fileName ||
+                            "Ready to study"
+                        )}
+                                </p>
+
+                                <small>
+                                    ${resource.fileName
+                                ? humanFileSize(
+                                    resource.fileSize
+                                )
+                                : "External link"
+                            }
+                                </small>
+
+                                ${progressHtml}
+                            </div>
+
+                            <div class="resource-card__actions">
+                                <button
+                                    class="primary-button"
+                                    data-open-resource="${resource.id}"
+                                >
+                                    ${actionLabel}
+                                </button>
+
+                                <button
+                                    class="secondary-button"
+                                    data-plan-resource="${resource.id}"
+                                >
+                                    Plan task
+                                </button>
+
+                                <button
+                                    class="danger-text-button"
+                                    data-delete-resource="${resource.id}"
+                                >
+                                    Delete
+                                </button>
+                            </div>
+                        </article>
+                        `;
+                    }
+                )
+                .join("")
+            : `
+            <div class="empty-state resource-empty">
+                No resources yet. Upload a document, video, or add a learning link.
+            </div>
+            `;
+
+    populateTaskResources();
+}
+
+function populateTaskResources() {
+    const current =
+        els.taskResource?.value ||
+        "";
+
+    if (
+        !els.taskResource
+    ) {
+        return;
+    }
+
+    els.taskResource.innerHTML =
+        `<option value="">No linked resource</option>${state.resources
+            .map(
+                r =>
+                    `<option value="${r.id}">${escapeHtml(
+                        r.title
+                    )}</option>`
+            )
+            .join("")
+        }`;
+
+    if (
+        state.resources.some(
+            r =>
+                r.id ===
+                current
+        )
+    ) {
+        els.taskResource.value =
+            current;
+    }
+}
+
+function revokeBlobUrl() {
+    if (currentBlobUrl) {
+        URL.revokeObjectURL(
+            currentBlobUrl
+        );
+
+        currentBlobUrl =
+            null;
+    }
+}
+
+// -------------------------------------------------------------
+// RESOURCE VIEWER
+// -------------------------------------------------------------
+
+let activeViewerCleanup =
+    null;
+
+function isResourceViewerOpen() {
+    return Boolean(
+        timer.activeResourceId &&
+        els.studyWorkspace &&
+        !els.studyWorkspace.classList.contains(
+            "hidden"
+        )
+    );
+}
+
+function isTextLikeResource(
+    resource
+) {
+    return (
+        resource.mimeType.startsWith(
+            "text/"
+        ) ||
+        /\.(txt|md|csv|json|log)$/i.test(
+            resource.fileName ||
+            ""
+        )
+    );
+}
+
+function isDocxResource(
+    resource
+) {
+    return (
+        resource.mimeType ===
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
+        /\.docx$/i.test(
+            resource.fileName ||
+            ""
+        )
+    );
+}
+
+function teardownResourceViewer() {
+    if (
+        typeof activeViewerCleanup ===
+        "function"
+    ) {
+        try {
+            activeViewerCleanup();
+
+        } catch (error) {
+            console.warn(
+                "Viewer cleanup failed.",
+                error
             );
         }
+    }
+
+    activeViewerCleanup =
+        null;
+
+    revokeBlobUrl();
+}
+
+async function openStudyResource(
+    id,
+    taskId = ""
+) {
+    const resource =
+        getResource(
+            id
+        );
+
+    if (!resource) {
+        showToast(
+            "That resource is no longer available.",
+            "error"
+        );
+
+        return;
+    }
+
+    teardownResourceViewer();
+
+    timer.activeResourceId =
+        resource.id;
+
+    els.workspaceTitle.textContent =
+        resource.title;
+
+    els.workspaceViewer.innerHTML =
+        `<div class="viewer-loading">Opening resource…</div>`;
+
+    els.studyWorkspace.classList.remove(
+        "hidden"
+    );
+
+    navigate(
+        "timer"
+    );
+
+    els.sessionTask.value =
+        taskId ||
+        "";
+
+    if (
+        resource.kind ===
+        "link"
+    ) {
+        renderLinkViewer(
+            resource
+        );
 
         els.studyWorkspace.scrollIntoView({
             behavior:
@@ -9201,527 +9313,679 @@ Rules:
             block:
                 "start"
         });
+
+        return;
     }
 
-    function renderLinkViewer(
-        resource
-    ) {
-        const safeUrl =
-            escapeHtml(
-                resource.url
+    const file =
+        await getResourceFileBlob(
+            resource
+        );
+
+    if (!file) {
+        els.workspaceViewer.innerHTML =
+            `
+            <div class="empty-state">
+                This file could not be loaded from your cloud library. Check your connection and try again.
+            </div>
+            `;
+
+        els.studyWorkspace.scrollIntoView({
+            behavior:
+                "smooth",
+
+            block:
+                "start"
+        });
+
+        return;
+    }
+
+    currentBlobUrl =
+        URL.createObjectURL(
+            file
+        );
+
+    try {
+        if (
+            resource.mimeType ===
+            "application/pdf"
+        ) {
+            await renderPdfViewer(
+                resource,
+                file
             );
 
-        const videoId =
-            extractYoutubeVideoId(
-                resource.url
+        } else if (
+            resource.mimeType.startsWith(
+                "image/"
+            )
+        ) {
+            renderImageViewer(
+                resource,
+                currentBlobUrl
             );
 
-        if (videoId) {
-            els.workspaceViewer.innerHTML =
-                `<iframe
-                    src="https://www.youtube.com/embed/${videoId}"
-                    title="${escapeHtml(
-                        resource.title
-                    )}"
-                    allow="autoplay; encrypted-media; picture-in-picture"
-                    allowfullscreen
-                ></iframe>`;
+        } else if (
+            resource.mimeType.startsWith(
+                "video/"
+            )
+        ) {
+            renderVideoViewer(
+                resource,
+                currentBlobUrl
+            );
 
-            return;
+        } else if (
+            resource.mimeType.startsWith(
+                "audio/"
+            )
+        ) {
+            renderAudioViewer(
+                resource,
+                currentBlobUrl
+            );
+
+        } else if (
+            isDocxResource(
+                resource
+            )
+        ) {
+            await renderDocxViewer(
+                resource,
+                file
+            );
+
+        } else if (
+            isTextLikeResource(
+                resource
+            )
+        ) {
+            await renderTextViewer(
+                resource,
+                file
+            );
+
+        } else {
+            renderUnsupportedViewer(
+                resource,
+                currentBlobUrl,
+                false
+            );
         }
 
-        els.workspaceViewer.innerHTML =
-            `
-            <div class="external-resource">
-                <div class="resource-card__icon">
-                    🔗
-                </div>
+    } catch (error) {
+        console.warn(
+            "Resource viewer failed to render — falling back to a download option.",
+            error
+        );
 
-                <h3>
-                    ${escapeHtml(
-                        resource.title
-                    )}
-                </h3>
-
-                <p>
-                    This is a web link, so it opens on its original website in a new browser tab.
-                </p>
-
-                <a
-                    class="primary-button link-button"
-                    href="${safeUrl}"
-                    target="_blank"
-                    rel="noopener"
-                >
-                    Open link in new tab
-                </a>
-            </div>
-            `;
+        renderUnsupportedViewer(
+            resource,
+            currentBlobUrl,
+            true
+        );
     }
 
-    function renderImageViewer(
-        resource,
-        blobUrl
-    ) {
+    els.studyWorkspace.scrollIntoView({
+        behavior:
+            "smooth",
+
+        block:
+            "start"
+    });
+}
+
+function renderLinkViewer(
+    resource
+) {
+    const safeUrl =
+        escapeHtml(
+            resource.url
+        );
+
+    const videoId =
+        extractYoutubeVideoId(
+            resource.url
+        );
+
+    if (videoId) {
         els.workspaceViewer.innerHTML =
-            `
-            <div
-                class="image-lightbox"
-                id="imageLightbox"
+            `<iframe
+                src="https://www.youtube.com/embed/${videoId}"
+                title="${escapeHtml(
+                resource.title
+            )}"
+                allow="autoplay; encrypted-media; picture-in-picture"
+                allowfullscreen
+            ></iframe>`;
+
+        return;
+    }
+
+    els.workspaceViewer.innerHTML =
+        `
+        <div class="external-resource">
+            <div class="resource-card__icon">
+                🔗
+            </div>
+
+            <h3>
+                ${escapeHtml(
+            resource.title
+        )}
+            </h3>
+
+            <p>
+                This is a web link, so it opens on its original website in a new browser tab.
+            </p>
+
+            <a
+                class="primary-button link-button"
+                href="${safeUrl}"
+                target="_blank"
+                rel="noopener"
             >
-                <div class="image-lightbox__stage">
-                    <img
-                        src="${blobUrl}"
-                        alt="${escapeHtml(
-                            resource.title
-                        )}"
-                        id="lightboxImage"
-                        draggable="false"
-                    >
-                </div>
+                Open link in new tab
+            </a>
+        </div>
+        `;
+}
 
-                <div class="viewer-toolbar image-toolbar">
-                    <button
-                        type="button"
-                        class="icon-button"
-                        id="imageZoomOut"
-                        aria-label="Zoom out"
-                    >
-                        −
-                    </button>
-
-                    <span id="imageZoomLevel">
-                        100%
-                    </span>
-
-                    <button
-                        type="button"
-                        class="icon-button"
-                        id="imageZoomIn"
-                        aria-label="Zoom in"
-                    >
-                        +
-                    </button>
-
-                    <button
-                        type="button"
-                        class="secondary-button"
-                        id="imageZoomReset"
-                    >
-                        Reset
-                    </button>
-                </div>
+function renderImageViewer(
+    resource,
+    blobUrl
+) {
+    els.workspaceViewer.innerHTML =
+        `
+        <div
+            class="image-lightbox"
+            id="imageLightbox"
+        >
+            <div class="image-lightbox__stage">
+                <img
+                    src="${blobUrl}"
+                    alt="${escapeHtml(
+            resource.title
+        )}"
+                    id="lightboxImage"
+                    draggable="false"
+                >
             </div>
-            `;
 
-        activeViewerCleanup =
-            attachImageZoom();
+            <div class="viewer-toolbar image-toolbar">
+                <button
+                    type="button"
+                    class="icon-button"
+                    id="imageZoomOut"
+                    aria-label="Zoom out"
+                >
+                    −
+                </button>
+
+                <span id="imageZoomLevel">
+                    100%
+                </span>
+
+                <button
+                    type="button"
+                    class="icon-button"
+                    id="imageZoomIn"
+                    aria-label="Zoom in"
+                >
+                    +
+                </button>
+
+                <button
+                    type="button"
+                    class="secondary-button"
+                    id="imageZoomReset"
+                >
+                    Reset
+                </button>
+            </div>
+        </div>
+        `;
+
+    activeViewerCleanup =
+        attachImageZoom();
+}
+
+function attachImageZoom() {
+    const stage =
+        els.workspaceViewer.querySelector(
+            ".image-lightbox__stage"
+        );
+
+    const img =
+        document.getElementById(
+            "lightboxImage"
+        );
+
+    const zoomLevelLabel =
+        document.getElementById(
+            "imageZoomLevel"
+        );
+
+    const zoomInButton =
+        document.getElementById(
+            "imageZoomIn"
+        );
+
+    const zoomOutButton =
+        document.getElementById(
+            "imageZoomOut"
+        );
+
+    const zoomResetButton =
+        document.getElementById(
+            "imageZoomReset"
+        );
+
+    if (
+        !stage ||
+        !img
+    ) {
+        return null;
     }
 
-    function attachImageZoom() {
-        const stage =
-            els.workspaceViewer.querySelector(
-                ".image-lightbox__stage"
-            );
+    let scale = 1;
+    let originX = 0;
+    let originY = 0;
+    let isPanning = false;
+    let panStartX = 0;
+    let panStartY = 0;
+    let pinchStartDistance = 0;
+    let pinchStartScale = 1;
+    let lastTapTime = 0;
 
-        const img =
-            document.getElementById(
-                "lightboxImage"
-            );
+    function applyTransform() {
+        img.style.transform =
+            `translate(${originX}px, ${originY}px) scale(${scale})`;
 
-        const zoomLevelLabel =
-            document.getElementById(
-                "imageZoomLevel"
-            );
+        zoomLevelLabel.textContent =
+            `${Math.round(
+                scale *
+                100
+            )}%`;
 
-        const zoomInButton =
-            document.getElementById(
-                "imageZoomIn"
-            );
+        stage.classList.toggle(
+            "zoomed",
+            scale > 1
+        );
+    }
 
-        const zoomOutButton =
-            document.getElementById(
-                "imageZoomOut"
-            );
-
-        const zoomResetButton =
-            document.getElementById(
-                "imageZoomReset"
+    function setScale(next) {
+        scale =
+            Math.min(
+                4,
+                Math.max(
+                    1,
+                    next
+                )
             );
 
         if (
-            !stage ||
-            !img
+            scale === 1
         ) {
-            return null;
+            originX = 0;
+            originY = 0;
         }
 
-        let scale = 1;
-        let originX = 0;
-        let originY = 0;
-        let isPanning = false;
-        let panStartX = 0;
-        let panStartY = 0;
-        let pinchStartDistance = 0;
-        let pinchStartScale = 1;
-        let lastTapTime = 0;
+        applyTransform();
+    }
 
-        function applyTransform() {
-            img.style.transform =
-                `translate(${originX}px, ${originY}px) scale(${scale})`;
+    function pointerDistance(
+        touches
+    ) {
+        const [
+            a,
+            b
+        ] =
+            touches;
 
-            zoomLevelLabel.textContent =
-                `${Math.round(
-                    scale *
-                    100
-                )}%`;
+        return Math.hypot(
+            a.clientX -
+            b.clientX,
 
-            stage.classList.toggle(
-                "zoomed",
-                scale > 1
-            );
+            a.clientY -
+            b.clientY
+        );
+    }
+
+    function onTouchStart(event) {
+        if (
+            event.touches.length ===
+            2
+        ) {
+            pinchStartDistance =
+                pointerDistance(
+                    event.touches
+                );
+
+            pinchStartScale =
+                scale;
+
+        } else if (
+            event.touches.length ===
+            1 &&
+            scale > 1
+        ) {
+            isPanning =
+                true;
+
+            panStartX =
+                event.touches[0].clientX -
+                originX;
+
+            panStartY =
+                event.touches[0].clientY -
+                originY;
         }
+    }
 
-        function setScale(next) {
-            scale =
-                Math.min(
-                    4,
-                    Math.max(
-                        1,
-                        next
-                    )
+    function onTouchMove(event) {
+        if (
+            event.touches.length ===
+            2
+        ) {
+            event.preventDefault();
+
+            const distance =
+                pointerDistance(
+                    event.touches
                 );
 
             if (
-                scale === 1
+                pinchStartDistance >
+                0
             ) {
-                originX = 0;
-                originY = 0;
+                setScale(
+                    pinchStartScale *
+                    (
+                        distance /
+                        pinchStartDistance
+                    )
+                );
             }
+
+        } else if (
+            event.touches.length ===
+            1 &&
+            isPanning
+        ) {
+            event.preventDefault();
+
+            originX =
+                event.touches[0].clientX -
+                panStartX;
+
+            originY =
+                event.touches[0].clientY -
+                panStartY;
 
             applyTransform();
         }
+    }
 
-        function pointerDistance(
-            touches
+    function onTouchEnd() {
+        isPanning =
+            false;
+
+        const now =
+            Date.now();
+
+        if (
+            now -
+            lastTapTime <
+            320
         ) {
-            const [
-                a,
-                b
-            ] =
-                touches;
-
-            return Math.hypot(
-                a.clientX -
-                b.clientX,
-
-                a.clientY -
-                b.clientY
+            setScale(
+                scale > 1
+                    ? 1
+                    : 2
             );
         }
 
-        function onTouchStart(event) {
-            if (
-                event.touches.length ===
-                2
-            ) {
-                pinchStartDistance =
-                    pointerDistance(
-                        event.touches
-                    );
+        lastTapTime =
+            now;
+    }
 
-                pinchStartScale =
-                    scale;
+    stage.addEventListener(
+        "touchstart",
+        onTouchStart,
+        {
+            passive:
+                true
+        }
+    );
 
-            } else if (
-                event.touches.length ===
-                1 &&
+    stage.addEventListener(
+        "touchmove",
+        onTouchMove,
+        {
+            passive:
+                false
+        }
+    );
+
+    stage.addEventListener(
+        "touchend",
+        onTouchEnd
+    );
+
+    zoomInButton.addEventListener(
+        "click",
+        () =>
+            setScale(
+                scale +
+                0.5
+            )
+    );
+
+    zoomOutButton.addEventListener(
+        "click",
+        () =>
+            setScale(
+                scale -
+                0.5
+            )
+    );
+
+    zoomResetButton.addEventListener(
+        "click",
+        () =>
+            setScale(
+                1
+            )
+    );
+
+    img.addEventListener(
+        "dblclick",
+        () =>
+            setScale(
                 scale > 1
-            ) {
-                isPanning =
-                    true;
+                    ? 1
+                    : 2
+            )
+    );
 
-                panStartX =
-                    event.touches[0].clientX -
-                    originX;
-
-                panStartY =
-                    event.touches[0].clientY -
-                    originY;
-            }
-        }
-
-        function onTouchMove(event) {
-            if (
-                event.touches.length ===
-                2
-            ) {
-                event.preventDefault();
-
-                const distance =
-                    pointerDistance(
-                        event.touches
-                    );
-
-                if (
-                    pinchStartDistance >
-                    0
-                ) {
-                    setScale(
-                        pinchStartScale *
-                        (
-                            distance /
-                            pinchStartDistance
-                        )
-                    );
-                }
-
-            } else if (
-                event.touches.length ===
-                1 &&
-                isPanning
-            ) {
-                event.preventDefault();
-
-                originX =
-                    event.touches[0].clientX -
-                    panStartX;
-
-                originY =
-                    event.touches[0].clientY -
-                    panStartY;
-
-                applyTransform();
-            }
-        }
-
-        function onTouchEnd() {
-            isPanning =
-                false;
-
-            const now =
-                Date.now();
-
-            if (
-                now -
-                lastTapTime <
-                320
-            ) {
-                setScale(
-                    scale > 1
-                        ? 1
-                        : 2
-                );
-            }
-
-            lastTapTime =
-                now;
-        }
-
-        stage.addEventListener(
+    return () => {
+        stage.removeEventListener(
             "touchstart",
-            onTouchStart,
-            {
-                passive:
-                    true
-            }
+            onTouchStart
         );
 
-        stage.addEventListener(
+        stage.removeEventListener(
             "touchmove",
-            onTouchMove,
-            {
-                passive:
-                    false
-            }
+            onTouchMove
         );
 
-        stage.addEventListener(
+        stage.removeEventListener(
             "touchend",
             onTouchEnd
         );
+    };
+}
 
-        zoomInButton.addEventListener(
-            "click",
-            () =>
-                setScale(
-                    scale +
-                    0.5
-                )
-        );
+function renderVideoViewer(
+    resource,
+    blobUrl
+) {
+    els.workspaceViewer.innerHTML =
+        `<video
+            controls
+            playsinline
+            webkit-playsinline
+            preload="metadata"
+            src="${blobUrl}"
+        ></video>`;
+}
 
-        zoomOutButton.addEventListener(
-            "click",
-            () =>
-                setScale(
-                    scale -
-                    0.5
-                )
-        );
+function renderAudioViewer(
+    resource,
+    blobUrl
+) {
+    els.workspaceViewer.innerHTML =
+        `
+        <div class="audio-player-wrap">
+            <div class="resource-card__icon">
+                🎧
+            </div>
 
-        zoomResetButton.addEventListener(
-            "click",
-            () =>
-                setScale(
-                    1
-                )
-        );
+            <p>
+                ${escapeHtml(
+            resource.title
+        )}
+            </p>
 
-        img.addEventListener(
-            "dblclick",
-            () =>
-                setScale(
-                    scale > 1
-                        ? 1
-                        : 2
-                )
-        );
-
-        return () => {
-            stage.removeEventListener(
-                "touchstart",
-                onTouchStart
-            );
-
-            stage.removeEventListener(
-                "touchmove",
-                onTouchMove
-            );
-
-            stage.removeEventListener(
-                "touchend",
-                onTouchEnd
-            );
-        };
-    }
-
-    function renderVideoViewer(
-        resource,
-        blobUrl
-    ) {
-        els.workspaceViewer.innerHTML =
-            `<video
+            <audio
                 controls
-                playsinline
-                webkit-playsinline
                 preload="metadata"
                 src="${blobUrl}"
-            ></video>`;
+            ></audio>
+        </div>
+        `;
+}
+
+function attachScrollProgressTracking(
+    resource,
+    container,
+    kind
+) {
+    if (!container) {
+        return;
     }
 
-    function renderAudioViewer(
-        resource,
-        blobUrl
-    ) {
-        els.workspaceViewer.innerHTML =
-            `
-            <div class="audio-player-wrap">
-                <div class="resource-card__icon">
-                    🎧
-                </div>
-
-                <p>
-                    ${escapeHtml(
-                        resource.title
-                    )}
-                </p>
-
-                <audio
-                    controls
-                    preload="metadata"
-                    src="${blobUrl}"
-                ></audio>
-            </div>
-            `;
-    }
-
-    function attachScrollProgressTracking(
-        resource,
-        container,
-        kind
-    ) {
-        if (!container) {
-            return;
-        }
-
-        const saved =
-            resource.readProgress?.kind ===
+    const saved =
+        resource.readProgress?.kind ===
             kind
-                ? resource.readProgress
-                : null;
+            ? resource.readProgress
+            : null;
+
+    if (
+        saved &&
+        saved.scrollPercent >
+        0
+    ) {
+        requestAnimationFrame(
+            () => {
+                const maxScroll =
+                    container.scrollHeight -
+                    container.clientHeight;
+
+                if (
+                    maxScroll >
+                    0
+                ) {
+                    container.scrollTop =
+                        maxScroll *
+                        saved.scrollPercent;
+                }
+            }
+        );
+
+        const isFinished =
+            (
+                saved.maxPercent ||
+                0
+            ) >=
+            0.999;
+
+        showToast(
+            isFinished
+                ? `You've already finished reading "${resource.title}". Reopening where you left off.`
+                : `Resuming "${resource.title}" from where you left off.`
+        );
+    }
+
+    let persistTimeoutId =
+        null;
+
+    function onScroll() {
+        const maxScroll =
+            container.scrollHeight -
+            container.clientHeight;
+
+        const percent =
+            maxScroll > 0
+                ? Math.min(
+                    1,
+                    container.scrollTop /
+                    maxScroll
+                )
+                : 1;
+
+        const maxPercent =
+            Math.max(
+                percent,
+
+                resource.readProgress?.maxPercent ||
+                0
+            );
+
+        resource.readProgress = {
+            kind,
+
+            scrollPercent:
+                percent,
+
+            maxPercent,
+
+            updatedAt:
+                Date.now()
+        };
 
         if (
-            saved &&
-            saved.scrollPercent >
-            0
+            persistTimeoutId
         ) {
-            requestAnimationFrame(
-                () => {
-                    const maxScroll =
-                        container.scrollHeight -
-                        container.clientHeight;
-
-                    if (
-                        maxScroll >
-                        0
-                    ) {
-                        container.scrollTop =
-                            maxScroll *
-                            saved.scrollPercent;
-                    }
-                }
-            );
-
-            const isFinished =
-                (
-                    saved.maxPercent ||
-                    0
-                ) >=
-                0.999;
-
-            showToast(
-                isFinished
-                    ? `You've already finished reading "${resource.title}". Reopening where you left off.`
-                    : `Resuming "${resource.title}" from where you left off.`
+            clearTimeout(
+                persistTimeoutId
             );
         }
 
-        let persistTimeoutId =
-            null;
+        persistTimeoutId =
+            setTimeout(
+                saveState,
+                600
+            );
+    }
 
-        function onScroll() {
-            const maxScroll =
-                container.scrollHeight -
-                container.clientHeight;
+    container.addEventListener(
+        "scroll",
+        onScroll,
+        {
+            passive:
+                true
+        }
+    );
 
-            const percent =
-                maxScroll > 0
-                    ? Math.min(
-                        1,
-
-                        container.scrollTop /
-                        maxScroll
-                    )
-                    : 1;
-
-            const maxPercent =
-                Math.max(
-                    percent,
-
-                    resource.readProgress?.maxPercent ||
-                    0
-                );
-
-            resource.readProgress = {
-                kind,
-                scrollPercent:
-                    percent,
-
-                maxPercent,
-
-                updatedAt:
-                    Date.now()
-            };
+    activeViewerCleanup =
+        () => {
+            container.removeEventListener(
+                "scroll",
+                onScroll
+            );
 
             if (
                 persistTimeoutId
@@ -9730,1976 +9994,1987 @@ Rules:
                     persistTimeoutId
                 );
             }
+        };
+}
 
-            persistTimeoutId =
-                setTimeout(
-                    saveState,
-                    600
-                );
-        }
+async function renderTextViewer(
+    resource,
+    file
+) {
+    const text =
+        await file.text();
 
-        container.addEventListener(
-            "scroll",
-            onScroll,
-            {
-                passive:
-                    true
-            }
-        );
+    els.workspaceViewer.innerHTML =
+        `<pre
+            class="text-viewer"
+            id="textViewerContent"
+        >${escapeHtml(
+            text
+        )}</pre>`;
 
-        activeViewerCleanup =
-            () => {
-                container.removeEventListener(
-                    "scroll",
-                    onScroll
-                );
-
-                if (
-                    persistTimeoutId
-                ) {
-                    clearTimeout(
-                        persistTimeoutId
-                    );
-                }
-            };
-    }
-
-    async function renderTextViewer(
+    attachScrollProgressTracking(
         resource,
-        file
-    ) {
-        const text =
-            await file.text();
 
-        els.workspaceViewer.innerHTML =
-            `<pre
-                class="text-viewer"
-                id="textViewerContent"
-            >${escapeHtml(
-                text
-            )}</pre>`;
+        document.getElementById(
+            "textViewerContent"
+        ),
 
-        attachScrollProgressTracking(
+        "text"
+    );
+}
+
+async function renderDocxViewer(
+    resource,
+    file
+) {
+    if (!window.mammoth) {
+        renderUnsupportedViewer(
             resource,
-
-            document.getElementById(
-                "textViewerContent"
-            ),
-
-            "text"
+            currentBlobUrl,
+            true
         );
+
+        return;
     }
 
-    async function renderDocxViewer(
+    const arrayBuffer =
+        await file.arrayBuffer();
+
+    const result =
+        await window.mammoth.convertToHtml({
+            arrayBuffer
+        });
+
+    els.workspaceViewer.innerHTML =
+        `<div
+            class="docx-viewer"
+            id="docxViewerContent"
+        >${result.value}</div>`;
+
+    attachScrollProgressTracking(
         resource,
-        file
-    ) {
-        if (!window.mammoth) {
-            renderUnsupportedViewer(
-                resource,
-                currentBlobUrl,
-                true
-            );
 
-            return;
-        }
+        document.getElementById(
+            "docxViewerContent"
+        ),
 
-        const arrayBuffer =
-            await file.arrayBuffer();
+        "docx"
+    );
+}
 
-        const result =
-            await window.mammoth.convertToHtml({
-                arrayBuffer
-            });
-
-        els.workspaceViewer.innerHTML =
-            `<div
-                class="docx-viewer"
-                id="docxViewerContent"
-            >${result.value}</div>`;
-
-        attachScrollProgressTracking(
-            resource,
-
-            document.getElementById(
-                "docxViewerContent"
-            ),
-
-            "docx"
-        );
-    }
-
-    function renderUnsupportedViewer(
-        resource,
-        blobUrl,
+function renderUnsupportedViewer(
+    resource,
+    blobUrl,
+    isFallback
+) {
+    const message =
         isFallback
-    ) {
-        const message =
-            isFallback
-                ? "This file couldn't be opened in the built-in viewer."
-                : "The Study Companion can't preview this file type directly.";
+            ? "This file couldn't be opened in the built-in viewer."
+            : "The Study Companion can't preview this file type directly.";
 
-        const meta = [
-            (
-                resource.fileName ||
-                ""
+    const meta = [
+        (
+            resource.fileName ||
+            ""
+        )
+            .split(
+                "."
             )
-                .split(
-                    "."
-                )
-                .pop()
-                ?.toUpperCase() ||
-            null,
+            .pop()
+            ?.toUpperCase() ||
+        null,
 
-            resource.fileSize
-                ? humanFileSize(
-                    resource.fileSize
-                )
-                : null
-        ]
-            .filter(
-                Boolean
+        resource.fileSize
+            ? humanFileSize(
+                resource.fileSize
             )
-            .join(
-                " · "
-            );
+            : null
+    ]
+        .filter(
+            Boolean
+        )
+        .join(
+            " · "
+        );
 
-        els.workspaceViewer.innerHTML =
-            `
-            <div class="external-resource">
-                <div class="resource-card__icon">
-                    📄
-                </div>
-
-                <h3>
-                    ${escapeHtml(
-                        resource.fileName ||
-                        resource.title
-                    )}
-                </h3>
-
-                ${
-                    meta
-                        ? `
-                            <p class="external-resource__meta">
-                                ${escapeHtml(
-                                    meta
-                                )}
-                            </p>
-                        `
-                        : ""
-                }
-
-                <p>
-                    ${message}
-                    You can download it or open it in another app instead.
-                </p>
-
-                <a
-                    class="primary-button link-button"
-                    href="${blobUrl}"
-                    download="${escapeHtml(
-                        resource.fileName ||
-                        resource.title
-                    )}"
-                    target="_blank"
-                    rel="noopener"
-                >
-                    Download / open externally
-                </a>
+    els.workspaceViewer.innerHTML =
+        `
+        <div class="external-resource">
+            <div class="resource-card__icon">
+                📄
             </div>
-            `;
-    }
 
-    async function renderPdfViewer(
-        resource,
-        file
-    ) {
-        if (!window.pdfjsLib) {
-            renderUnsupportedViewer(
-                resource,
-                currentBlobUrl,
-                true
-            );
+            <h3>
+                ${escapeHtml(
+            resource.fileName ||
+            resource.title
+        )}
+            </h3>
 
-            return;
+            ${meta
+            ? `
+                <p class="external-resource__meta">
+                    ${escapeHtml(
+                meta
+            )}
+                </p>
+                `
+            : ""
         }
 
-        const bytes =
-            new Uint8Array(
-                await file.arrayBuffer()
-            );
+            <p>
+                ${message}
+                You can download it or open it in another app instead.
+            </p>
 
-        const pdf =
-            await window.pdfjsLib
-                .getDocument({
-                    data:
-                        bytes
-                })
-                .promise;
+            <a
+                class="primary-button link-button"
+                href="${blobUrl}"
+                download="${escapeHtml(
+            resource.fileName ||
+            resource.title
+        )}"
+                target="_blank"
+                rel="noopener"
+            >
+                Download / open externally
+            </a>
+        </div>
+        `;
+} async function renderPdfViewer(
+    resource,
+    file
+) {
+    if (!window.pdfjsLib) {
+        renderUnsupportedViewer(
+            resource,
+            currentBlobUrl,
+            true
+        );
 
-        const savedProgress =
-            resource.readProgress?.kind ===
+        return;
+    }
+
+    const bytes =
+        new Uint8Array(
+            await file.arrayBuffer()
+        );
+
+    const pdf =
+        await window.pdfjsLib
+            .getDocument({
+                data:
+                    bytes
+            })
+            .promise;
+
+    const savedProgress =
+        resource.readProgress?.kind ===
             "pdf"
-                ? resource.readProgress
-                : null;
+            ? resource.readProgress
+            : null;
 
-        const startPage =
-            savedProgress &&
+    const startPage =
+        savedProgress &&
             savedProgress.lastPage >=
             1 &&
             savedProgress.lastPage <=
             pdf.numPages
-                ? savedProgress.lastPage
-                : 1;
+            ? savedProgress.lastPage
+            : 1;
 
-        els.workspaceViewer.innerHTML =
-            `
-            <div
-                class="pdf-viewer"
-                id="pdfViewer"
-            >
-                <div class="viewer-toolbar pdf-toolbar">
-                    <button
-                        type="button"
-                        class="icon-button"
-                        id="pdfPrevPage"
-                        aria-label="Previous page"
-                    >
-                        ‹
-                    </button>
-
-                    <span id="pdfPageIndicator">
-                        Page 1 of ${pdf.numPages}
-                    </span>
-
-                    <button
-                        type="button"
-                        class="icon-button"
-                        id="pdfNextPage"
-                        aria-label="Next page"
-                    >
-                        ›
-                    </button>
-
-                    <span class="pdf-toolbar__spacer"></span>
-
-                    <span
-                        class="pdf-progress-label"
-                        id="pdfProgressLabel"
-                    ></span>
-
-                    <button
-                        type="button"
-                        class="icon-button"
-                        id="pdfZoomOut"
-                        aria-label="Zoom out"
-                    >
-                        −
-                    </button>
-
-                    <span id="pdfZoomLevel">
-                        100%
-                    </span>
-
-                    <button
-                        type="button"
-                        class="icon-button"
-                        id="pdfZoomIn"
-                        aria-label="Zoom in"
-                    >
-                        +
-                    </button>
-                </div>
-
-                <div
-                    class="pdf-canvas-scroll"
-                    id="pdfCanvasScroll"
+    els.workspaceViewer.innerHTML =
+        `
+        <div
+            class="pdf-viewer"
+            id="pdfViewer"
+        >
+            <div class="viewer-toolbar pdf-toolbar">
+                <button
+                    type="button"
+                    class="icon-button"
+                    id="pdfPrevPage"
+                    aria-label="Previous page"
                 >
-                    <canvas id="pdfCanvas"></canvas>
-                </div>
+                    ‹
+                </button>
+
+                <span id="pdfPageIndicator">
+                    Page 1 of ${pdf.numPages}
+                </span>
+
+                <button
+                    type="button"
+                    class="icon-button"
+                    id="pdfNextPage"
+                    aria-label="Next page"
+                >
+                    ›
+                </button>
+
+                <span class="pdf-toolbar__spacer"></span>
+
+                <span
+                    class="pdf-progress-label"
+                    id="pdfProgressLabel"
+                ></span>
+
+                <button
+                    type="button"
+                    class="icon-button"
+                    id="pdfZoomOut"
+                    aria-label="Zoom out"
+                >
+                    −
+                </button>
+
+                <span id="pdfZoomLevel">
+                    100%
+                </span>
+
+                <button
+                    type="button"
+                    class="icon-button"
+                    id="pdfZoomIn"
+                    aria-label="Zoom in"
+                >
+                    +
+                </button>
             </div>
-            `;
 
-        const canvas =
-            document.getElementById(
-                "pdfCanvas"
+            <div
+                class="pdf-canvas-scroll"
+                id="pdfCanvasScroll"
+            >
+                <canvas id="pdfCanvas"></canvas>
+            </div>
+        </div>
+        `;
+
+    const canvas =
+        document.getElementById(
+            "pdfCanvas"
+        );
+
+    const scrollArea =
+        document.getElementById(
+            "pdfCanvasScroll"
+        );
+
+    const pageIndicator =
+        document.getElementById(
+            "pdfPageIndicator"
+        );
+
+    const zoomLevelLabel =
+        document.getElementById(
+            "pdfZoomLevel"
+        );
+
+    const progressLabel =
+        document.getElementById(
+            "pdfProgressLabel"
+        );
+
+    let pageNumber =
+        startPage;
+
+    let zoom =
+        1;
+
+    let renderTask =
+        null;
+
+    let destroyed =
+        false;
+
+    function persistReadProgress() {
+        const maxPage =
+            Math.max(
+                pageNumber,
+
+                resource.readProgress?.maxPage ||
+                0
             );
 
-        const scrollArea =
-            document.getElementById(
-                "pdfCanvasScroll"
+        resource.readProgress = {
+            kind:
+                "pdf",
+
+            lastPage:
+                pageNumber,
+
+            maxPage,
+
+            totalPages:
+                pdf.numPages,
+
+            updatedAt:
+                Date.now()
+        };
+
+        saveState();
+
+        if (progressLabel) {
+            progressLabel.textContent =
+                `Furthest read: page ${maxPage} of ${pdf.numPages}`;
+        }
+    }
+
+    async function renderPage() {
+        if (destroyed) {
+            return;
+        }
+
+        const page =
+            await pdf.getPage(
+                pageNumber
             );
 
-        const pageIndicator =
-            document.getElementById(
-                "pdfPageIndicator"
+        const baseViewport =
+            page.getViewport({
+                scale:
+                    1
+            });
+
+        const fitScale =
+            Math.max(
+                0.2,
+
+                (
+                    scrollArea.clientWidth -
+                    24
+                ) /
+                baseViewport.width
             );
 
-        const zoomLevelLabel =
-            document.getElementById(
-                "pdfZoomLevel"
+        const viewport =
+            page.getViewport({
+                scale:
+                    fitScale *
+                    zoom
+            });
+
+        canvas.width =
+            Math.floor(
+                viewport.width
             );
 
-        const progressLabel =
-            document.getElementById(
-                "pdfProgressLabel"
+        canvas.height =
+            Math.floor(
+                viewport.height
             );
 
-        let pageNumber =
-            startPage;
+        if (renderTask) {
+            renderTask.cancel();
+        }
 
-        let zoom =
-            1;
+        const context =
+            canvas.getContext(
+                "2d"
+            );
 
-        let renderTask =
-            null;
+        renderTask =
+            page.render({
+                canvasContext:
+                    context,
 
-        let destroyed =
-            false;
+                viewport
+            });
 
-        function persistReadProgress() {
-            const maxPage =
-                Math.max(
-                    pageNumber,
+        try {
+            await renderTask.promise;
 
-                    resource.readProgress?.maxPage ||
-                    0
-                );
-
-            resource.readProgress = {
-                kind:
-                    "pdf",
-
-                lastPage:
-                    pageNumber,
-
-                maxPage,
-
-                totalPages:
-                    pdf.numPages,
-
-                updatedAt:
-                    Date.now()
-            };
-
-            saveState();
-
-            if (progressLabel) {
-                progressLabel.textContent =
-                    `Furthest read: page ${maxPage} of ${pdf.numPages}`;
+        } catch (error) {
+            if (
+                error?.name !==
+                "RenderingCancelledException"
+            ) {
+                throw error;
             }
         }
 
-        async function renderPage() {
-            if (destroyed) {
-                return;
+        pageIndicator.textContent =
+            `Page ${pageNumber} of ${pdf.numPages}`;
+
+        zoomLevelLabel.textContent =
+            `${Math.round(
+                zoom *
+                100
+            )}%`;
+
+        persistReadProgress();
+    }
+
+    document
+        .getElementById(
+            "pdfPrevPage"
+        )
+        .addEventListener(
+            "click",
+            () => {
+                if (
+                    pageNumber >
+                    1
+                ) {
+                    pageNumber -=
+                        1;
+
+                    renderPage();
+                }
             }
+        );
 
-            const page =
-                await pdf.getPage(
-                    pageNumber
-                );
+    document
+        .getElementById(
+            "pdfNextPage"
+        )
+        .addEventListener(
+            "click",
+            () => {
+                if (
+                    pageNumber <
+                    pdf.numPages
+                ) {
+                    pageNumber +=
+                        1;
 
-            const baseViewport =
-                page.getViewport({
-                    scale:
-                        1
-                });
+                    renderPage();
+                }
+            }
+        );
 
-            const fitScale =
-                Math.max(
-                    0.2,
+    document
+        .getElementById(
+            "pdfZoomIn"
+        )
+        .addEventListener(
+            "click",
+            () => {
+                zoom =
+                    Math.min(
+                        3,
 
-                    (
-                        scrollArea.clientWidth -
-                        24
-                    ) /
-                    baseViewport.width
-                );
+                        zoom +
+                        0.25
+                    );
 
-            const viewport =
-                page.getViewport({
-                    scale:
-                        fitScale *
-                        zoom
-                });
+                renderPage();
+            }
+        );
 
-            canvas.width =
-                Math.floor(
-                    viewport.width
-                );
+    document
+        .getElementById(
+            "pdfZoomOut"
+        )
+        .addEventListener(
+            "click",
+            () => {
+                zoom =
+                    Math.max(
+                        0.5,
 
-            canvas.height =
-                Math.floor(
-                    viewport.height
-                );
+                        zoom -
+                        0.25
+                    );
+
+                renderPage();
+            }
+        );
+
+    await renderPage();
+
+    if (
+        startPage >
+        1
+    ) {
+        const isFinished =
+            (
+                savedProgress?.maxPage ||
+                0
+            ) >=
+            pdf.numPages;
+
+        showToast(
+            isFinished
+                ? `You've already read all ${pdf.numPages} pages of "${resource.title}". Reopening at page ${startPage}.`
+                : `Resuming "${resource.title}" from page ${startPage}.`
+        );
+    }
+
+    activeViewerCleanup =
+        () => {
+            destroyed =
+                true;
 
             if (renderTask) {
                 renderTask.cancel();
             }
 
-            const context =
-                canvas.getContext(
-                    "2d"
-                );
+            pdf.destroy?.();
+        };
+}
 
-            renderTask =
-                page.render({
-                    canvasContext:
-                        context,
+function closeStudyWorkspace() {
+    els.studyWorkspace.classList.remove(
+        "workspace-fullscreen"
+    );
 
-                    viewport
-                });
+    els.studyWorkspace.classList.add(
+        "hidden"
+    );
 
-            try {
-                await renderTask.promise;
+    els.workspaceViewer.innerHTML =
+        "";
 
-            } catch (error) {
-                if (
-                    error?.name !==
-                    "RenderingCancelledException"
-                ) {
-                    throw error;
-                }
-            }
+    timer.activeResourceId =
+        null;
 
-            pageIndicator.textContent =
-                `Page ${pageNumber} of ${pdf.numPages}`;
+    teardownResourceViewer();
+}
 
-            zoomLevelLabel.textContent =
-                `${Math.round(
-                    zoom *
-                    100
-                )}%`;
-
-            persistReadProgress();
-        }
-
-        document
-            .getElementById(
-                "pdfPrevPage"
-            )
-            .addEventListener(
-                "click",
-                () => {
-                    if (
-                        pageNumber >
-                        1
-                    ) {
-                        pageNumber -=
-                            1;
-
-                        renderPage();
-                    }
-                }
-            );
-
-        document
-            .getElementById(
-                "pdfNextPage"
-            )
-            .addEventListener(
-                "click",
-                () => {
-                    if (
-                        pageNumber <
-                        pdf.numPages
-                    ) {
-                        pageNumber +=
-                            1;
-
-                        renderPage();
-                    }
-                }
-            );
-
-        document
-            .getElementById(
-                "pdfZoomIn"
-            )
-            .addEventListener(
-                "click",
-                () => {
-                    zoom =
-                        Math.min(
-                            3,
-                            zoom +
-                            0.25
-                        );
-
-                    renderPage();
-                }
-            );
-
-        document
-            .getElementById(
-                "pdfZoomOut"
-            )
-            .addEventListener(
-                "click",
-                () => {
-                    zoom =
-                        Math.max(
-                            0.5,
-                            zoom -
-                            0.25
-                        );
-
-                    renderPage();
-                }
-            );
-
-        await renderPage();
-
-        if (
-            startPage >
-            1
-        ) {
-            const isFinished =
-                (
-                    savedProgress?.maxPage ||
-                    0
-                ) >=
-                pdf.numPages;
-
-            showToast(
-                isFinished
-                    ? `You've already read all ${pdf.numPages} pages of "${resource.title}". Reopening at page ${startPage}.`
-                    : `Resuming "${resource.title}" from page ${startPage}.`
-            );
-        }
-
-        activeViewerCleanup =
-            () => {
-                destroyed =
-                    true;
-
-                if (renderTask) {
-                    renderTask.cancel();
-                }
-
-                pdf.destroy?.();
-            };
-    }
-
-    function closeStudyWorkspace() {
-        els.studyWorkspace.classList.remove(
+function toggleWorkspaceFullscreen() {
+    const isFullscreen =
+        els.studyWorkspace.classList.toggle(
             "workspace-fullscreen"
         );
 
-        els.studyWorkspace.classList.add(
-            "hidden"
-        );
-
-        els.workspaceViewer.innerHTML =
-            "";
-
-        timer.activeResourceId =
-            null;
-
-        teardownResourceViewer();
-    }
-
-    function toggleWorkspaceFullscreen() {
-        const isFullscreen =
-            els.studyWorkspace.classList.toggle(
-                "workspace-fullscreen"
-            );
-
-        if (
-            els.toggleWorkspaceFullscreen
-        ) {
-            els.toggleWorkspaceFullscreen.textContent =
-                isFullscreen
-                    ? "⤡ Exit full screen"
-                    : "⤢ Full screen";
-        }
-    }
-
-    function planResourceTask(id) {
-        const resource =
-            getResource(
-                id
-            );
-
-        if (!resource) {
-            return;
-        }
-
-        openTaskEditor({
-            title:
-                `Study: ${resource.title}`,
-
-            description:
-                resource.notes ||
-                `Study ${resource.title}`,
-
-            priority:
-                "medium",
-
-            dueDate:
-                "",
-
-            status:
-                "todo",
-
-            resourceId:
-                id
-        });
-    }
-
-    function startTaskStudy(id) {
-        const task =
-            state.tasks.find(
-                t =>
-                    t.id ===
-                    id
-            );
-
-        if (
-            !task?.resourceId
-        ) {
-            return;
-        }
-
-        if (
-            task.status ===
-            "todo"
-        ) {
-            task.status =
-                "inProgress";
-        }
-
-        saveState();
-        renderTasks();
-
-        openStudyResource(
-            task.resourceId,
-            task.id
-        );
-    }
-
-    async function deleteResource(id) {
-        const resource =
-            getResource(
-                id
-            );
-
-        if (
-            !resource ||
-            !window.confirm(
-                `Delete "${resource.title}" from your library?`
-            )
-        ) {
-            return;
-        }
-
-        await removeResourceFile(
-            resource
-        );
-
-        state.resources =
-            state.resources.filter(
-                r =>
-                    r.id !==
-                    id
-            );
-
-        state.tasks.forEach(
-            t => {
-                if (
-                    t.resourceId ===
-                    id
-                ) {
-                    t.resourceId =
-                        "";
-                }
-            }
-        );
-
-        saveState();
-        renderAll();
-
-        showToast(
-            "Resource deleted.",
-            "warning"
-        );
-    }
-
-    // -------------------------------------------------------------
-    // PROFILE
-    // -------------------------------------------------------------
-
-    function initials(
-        name = "Student"
+    if (
+        els.toggleWorkspaceFullscreen
     ) {
-        return (
-            name
-                .split(
-                    /\s+/
-                )
+        els.toggleWorkspaceFullscreen.textContent =
+            isFullscreen
+                ? "⤡ Exit full screen"
+                : "⤢ Full screen";
+    }
+}
+
+function planResourceTask(id) {
+    const resource =
+        getResource(
+            id
+        );
+
+    if (!resource) {
+        return;
+    }
+
+    openTaskEditor({
+        title:
+            `Study: ${resource.title}`,
+
+        description:
+            resource.notes ||
+            `Study ${resource.title}`,
+
+        priority:
+            "medium",
+
+        dueDate:
+            "",
+
+        status:
+            "todo",
+
+        resourceId:
+            id
+    });
+}
+
+function startTaskStudy(id) {
+    const task =
+        state.tasks.find(
+            t =>
+                t.id ===
+                id
+        );
+
+    if (
+        !task?.resourceId
+    ) {
+        return;
+    }
+
+    if (
+        task.status ===
+        "todo"
+    ) {
+        task.status =
+            "inProgress";
+    }
+
+    saveState();
+
+    renderTasks();
+
+    openStudyResource(
+        task.resourceId,
+        task.id
+    );
+}
+
+async function deleteResource(id) {
+    const resource =
+        getResource(
+            id
+        );
+
+    if (
+        !resource ||
+        !window.confirm(
+            `Delete "${resource.title}" from your library?`
+        )
+    ) {
+        return;
+    }
+
+    await removeResourceFile(
+        resource
+    );
+
+    state.resources =
+        state.resources.filter(
+            r =>
+                r.id !==
+                id
+        );
+
+    state.tasks.forEach(
+        t => {
+            if (
+                t.resourceId ===
+                id
+            ) {
+                t.resourceId =
+                    "";
+            }
+        }
+    );
+
+    saveState();
+
+    renderAll();
+
+    showToast(
+        "Resource deleted.",
+        "warning"
+    );
+}
+
+// -------------------------------------------------------------
+// PROFILE
+// -------------------------------------------------------------
+
+function initials(
+    name = "Student"
+) {
+    return (
+        name
+            .split(
+                /\s+/
+            )
+            .filter(
+                Boolean
+            )
+            .slice(
+                0,
+                2
+            )
+            .map(
+                part =>
+                    part[0]
+            )
+            .join("")
+            .toUpperCase() ||
+        "ST"
+    );
+}
+
+function applyAvatar(
+    element,
+    profile,
+    large = false
+) {
+    const init =
+        initials(
+            profile.name
+        );
+
+    element.textContent =
+        profile.photo
+            ? ""
+            : init;
+
+    element.style.backgroundImage =
+        profile.photo
+            ? `url("${profile.photo}")`
+            : "";
+
+    element.classList.toggle(
+        "has-photo",
+
+        Boolean(
+            profile.photo
+        )
+    );
+
+    if (large) {
+        element.setAttribute(
+            "aria-label",
+
+            profile.photo
+                ? `${profile.name || "Student"} profile picture`
+                : `${init} avatar`
+        );
+    }
+}
+
+function renderProfile() {
+    const p =
+        state.profile;
+
+    const has =
+        Boolean(
+            p.name
+        );
+
+    applyAvatar(
+        els.profileShortcut,
+        p
+    );
+
+    applyAvatar(
+        els.profileAvatarLarge,
+        p,
+        true
+    );
+
+    els.removeProfilePhoto.classList.toggle(
+        "hidden",
+        !p.photo
+    );
+
+    els.profileDisplayName.textContent =
+        has
+            ? p.name
+            : "Create your student profile";
+
+    els.profileDisplayMeta.textContent =
+        has
+            ? [
+                p.course,
+                p.department,
+                p.level,
+                p.school
+            ]
                 .filter(
                     Boolean
                 )
-                .slice(
-                    0,
-                    2
-                )
-                .map(
-                    part =>
-                        part[0]
-                )
-                .join("")
-                .toUpperCase() ||
-            "ST"
-        );
-    }
+                .join(
+                    " • "
+                ) ||
+            p.email
+            : "Add your details to personalise your study experience.";
 
-    function applyAvatar(
-        element,
-        profile,
-        large = false
-    ) {
-        const init =
-            initials(
-                profile.name
-            );
+    els.profileName.value =
+        p.name ||
+        "";
 
-        element.textContent =
-            profile.photo
-                ? ""
-                : init;
+    els.profileEmail.value =
+        p.email ||
+        "";
 
-        element.style.backgroundImage =
-            profile.photo
-                ? `url("${profile.photo}")`
-                : "";
+    els.profileSchool.value =
+        p.school ||
+        "";
 
-        element.classList.toggle(
-            "has-photo",
-            Boolean(
-                profile.photo
-            )
-        );
+    els.profileCourse.value =
+        p.course ||
+        "";
 
-        if (large) {
-            element.setAttribute(
-                "aria-label",
+    els.profileDepartment.value =
+        p.department ||
+        "";
 
-                profile.photo
-                    ? `${profile.name || "Student"} profile picture`
-                    : `${init} avatar`
+    els.profileLevel.value =
+        p.level ||
+        "";
+
+    els.profileBio.value =
+        p.bio ||
+        "";
+
+    els.profileResourceCount.textContent =
+        state.resources.length;
+
+    els.profileTaskCount.textContent =
+        state.tasks.length;
+
+    els.profileSessionCount.textContent =
+        state.sessions.length;
+}
+
+function saveProfile(event) {
+    event.preventDefault();
+
+    state.profile = {
+        ...state.profile,
+
+        name:
+            els.profileName.value.trim(),
+
+        email:
+            els.profileEmail.value.trim(),
+
+        school:
+            els.profileSchool.value.trim(),
+
+        course:
+            els.profileCourse.value.trim(),
+
+        department:
+            els.profileDepartment.value.trim(),
+
+        level:
+            els.profileLevel.value.trim(),
+
+        bio:
+            els.profileBio.value.trim()
+    };
+
+    saveState();
+
+    renderProfile();
+
+    showToast(
+        "Student profile saved."
+    );
+}
+
+function resizeProfilePhoto(
+    file
+) {
+    return new Promise(
+        (
+            resolve,
+            reject
+        ) => {
+            const reader =
+                new FileReader();
+
+            reader.onerror =
+                () =>
+                    reject(
+                        new Error(
+                            "Could not read image"
+                        )
+                    );
+
+            reader.onload =
+                () => {
+                    const image =
+                        new Image();
+
+                    image.onerror =
+                        () =>
+                            reject(
+                                new Error(
+                                    "Invalid image"
+                                )
+                            );
+
+                    image.onload =
+                        () => {
+                            const max =
+                                640;
+
+                            const scale =
+                                Math.min(
+                                    1,
+
+                                    max /
+                                    Math.max(
+                                        image.width,
+                                        image.height
+                                    )
+                                );
+
+                            const canvas =
+                                document.createElement(
+                                    "canvas"
+                                );
+
+                            canvas.width =
+                                Math.round(
+                                    image.width *
+                                    scale
+                                );
+
+                            canvas.height =
+                                Math.round(
+                                    image.height *
+                                    scale
+                                );
+
+                            const ctx =
+                                canvas.getContext(
+                                    "2d"
+                                );
+
+                            ctx.drawImage(
+                                image,
+                                0,
+                                0,
+                                canvas.width,
+                                canvas.height
+                            );
+
+                            resolve(
+                                canvas.toDataURL(
+                                    "image/jpeg",
+                                    0.86
+                                )
+                            );
+                        };
+
+                    image.src =
+                        reader.result;
+                };
+
+            reader.readAsDataURL(
+                file
             );
         }
+    );
+}
+
+async function uploadProfilePhoto(
+    event
+) {
+    const file =
+        event.target.files?.[0];
+
+    if (!file) {
+        return;
     }
 
-    function renderProfile() {
-        const p =
-            state.profile;
-
-        const has =
-            Boolean(
-                p.name
-            );
-
-        applyAvatar(
-            els.profileShortcut,
-            p
-        );
-
-        applyAvatar(
-            els.profileAvatarLarge,
-            p,
-            true
-        );
-
-        els.removeProfilePhoto.classList.toggle(
-            "hidden",
-            !p.photo
-        );
-
-        els.profileDisplayName.textContent =
-            has
-                ? p.name
-                : "Create your student profile";
-
-        els.profileDisplayMeta.textContent =
-            has
-                ? [
-                    p.course,
-                    p.department,
-                    p.level,
-                    p.school
-                ]
-                    .filter(
-                        Boolean
-                    )
-                    .join(
-                        " • "
-                    ) ||
-                    p.email
-                : "Add your details to personalise your study experience.";
-
-        els.profileName.value =
-            p.name ||
-            "";
-
-        els.profileEmail.value =
-            p.email ||
-            "";
-
-        els.profileSchool.value =
-            p.school ||
-            "";
-
-        els.profileCourse.value =
-            p.course ||
-            "";
-
-        els.profileDepartment.value =
-            p.department ||
-            "";
-
-        els.profileLevel.value =
-            p.level ||
-            "";
-
-        els.profileBio.value =
-            p.bio ||
-            "";
-
-        els.profileResourceCount.textContent =
-            state.resources.length;
-
-        els.profileTaskCount.textContent =
-            state.tasks.length;
-
-        els.profileSessionCount.textContent =
-            state.sessions.length;
-    }
-
-    function saveProfile(event) {
-        event.preventDefault();
-
-        state.profile = {
-            ...state.profile,
-
-            name:
-                els.profileName.value.trim(),
-
-            email:
-                els.profileEmail.value.trim(),
-
-            school:
-                els.profileSchool.value.trim(),
-
-            course:
-                els.profileCourse.value.trim(),
-
-            department:
-                els.profileDepartment.value.trim(),
-
-            level:
-                els.profileLevel.value.trim(),
-
-            bio:
-                els.profileBio.value.trim()
-        };
-
-        saveState();
-        renderProfile();
-
+    if (
+        ![
+            "image/jpeg",
+            "image/png",
+            "image/webp"
+        ].includes(
+            file.type
+        )
+    ) {
         showToast(
-            "Student profile saved."
+            "Choose a JPG, PNG, or WebP image.",
+            "warning"
         );
+
+        return;
     }
 
-    function resizeProfilePhoto(
-        file
+    if (
+        file.size >
+        5 *
+        1024 *
+        1024
     ) {
-        return new Promise(
-            (
-                resolve,
-                reject
-            ) => {
-                const reader =
-                    new FileReader();
-
-                reader.onerror =
-                    () =>
-                        reject(
-                            new Error(
-                                "Could not read image"
-                            )
-                        );
-
-                reader.onload =
-                    () => {
-                        const image =
-                            new Image();
-
-                        image.onerror =
-                            () =>
-                                reject(
-                                    new Error(
-                                        "Invalid image"
-                                    )
-                                );
-
-                        image.onload =
-                            () => {
-                                const max =
-                                    640;
-
-                                const scale =
-                                    Math.min(
-                                        1,
-
-                                        max /
-                                        Math.max(
-                                            image.width,
-                                            image.height
-                                        )
-                                    );
-
-                                const canvas =
-                                    document.createElement(
-                                        "canvas"
-                                    );
-
-                                canvas.width =
-                                    Math.round(
-                                        image.width *
-                                        scale
-                                    );
-
-                                canvas.height =
-                                    Math.round(
-                                        image.height *
-                                        scale
-                                    );
-
-                                const ctx =
-                                    canvas.getContext(
-                                        "2d"
-                                    );
-
-                                ctx.drawImage(
-                                    image,
-                                    0,
-                                    0,
-                                    canvas.width,
-                                    canvas.height
-                                );
-
-                                resolve(
-                                    canvas.toDataURL(
-                                        "image/jpeg",
-                                        0.86
-                                    )
-                                );
-                            };
-
-                        image.src =
-                            reader.result;
-                    };
-
-                reader.readAsDataURL(
-                    file
-                );
-            }
+        showToast(
+            "Profile pictures must be 5 MB or smaller.",
+            "warning"
         );
+
+        return;
     }
 
-    async function uploadProfilePhoto(
-        event
-    ) {
-        const file =
-            event.target.files?.[0];
-
-        if (!file) {
-            return;
-        }
-
-        if (
-            ![
-                "image/jpeg",
-                "image/png",
-                "image/webp"
-            ].includes(
-                file.type
-            )
-        ) {
-            showToast(
-                "Choose a JPG, PNG, or WebP image.",
-                "warning"
-            );
-
-            return;
-        }
-
-        if (
-            file.size >
-            5 *
-            1024 *
-            1024
-        ) {
-            showToast(
-                "Profile pictures must be 5 MB or smaller.",
-                "warning"
-            );
-
-            return;
-        }
-
-        try {
-            state.profile.photo =
-                await resizeProfilePhoto(
-                    file
-                );
-
-            saveState();
-            renderProfile();
-
-            showToast(
-                "Profile picture updated."
-            );
-
-        } catch {
-            showToast(
-                "We could not process that image.",
-                "warning"
-            );
-        }
-
-        event.target.value =
-            "";
-    }
-
-    function removeProfilePhoto() {
-        if (
-            !state.profile.photo
-        ) {
-            return;
-        }
-
+    try {
         state.profile.photo =
-            "";
+            await resizeProfilePhoto(
+                file
+            );
 
         saveState();
+
         renderProfile();
 
         showToast(
-            "Profile picture removed.",
+            "Profile picture updated."
+        );
+
+    } catch {
+        showToast(
+            "We could not process that image.",
             "warning"
         );
     }
 
-    function renderAll() {
-        renderDashboard();
-        renderTasks();
-        renderResources();
-        renderProfile();
-        renderProgress();
-        populateSettings();
-        updateTimerUI();
+    event.target.value =
+        "";
+}
+
+function removeProfilePhoto() {
+    if (
+        !state.profile.photo
+    ) {
+        return;
     }
 
-    // -------------------------------------------------------------
-    // INTEGRITY COVERAGE
-    // -------------------------------------------------------------
+    state.profile.photo =
+        "";
 
-    function isReflectionOrAssessmentOpen() {
-        return Boolean(
-            (
-                els.reflectionModal &&
-                !els.reflectionModal.classList.contains(
-                    "hidden"
-                )
-            ) ||
-            (
-                els.assessmentModal &&
-                !els.assessmentModal.classList.contains(
-                    "hidden"
-                )
+    saveState();
+
+    renderProfile();
+
+    showToast(
+        "Profile picture removed.",
+        "warning"
+    );
+}
+
+function renderAll() {
+    renderDashboard();
+    renderTasks();
+    renderResources();
+    renderProfile();
+    renderProgress();
+    populateSettings();
+    updateTimerUI();
+}
+
+// -------------------------------------------------------------
+// INTEGRITY COVERAGE
+// -------------------------------------------------------------
+
+function isReflectionOrAssessmentOpen() {
+    return Boolean(
+        (
+            els.reflectionModal &&
+            !els.reflectionModal.classList.contains(
+                "hidden"
             )
-        );
+        ) ||
+        (
+            els.assessmentModal &&
+            !els.assessmentModal.classList.contains(
+                "hidden"
+            )
+        )
+    );
+}
+
+function flagReflectionIntegrityBreach(
+    reason
+) {
+    if (
+        !timer.pendingCompletion
+    ) {
+        return;
     }
 
-    function flagReflectionIntegrityBreach(
+    timer.pendingCompletion.focusViolations =
+        (
+            timer.pendingCompletion.focusViolations ||
+            0
+        ) +
+        1;
+
+    timer.pendingCompletion.checksFailed =
+        (
+            timer.pendingCompletion.checksFailed ||
+            0
+        ) +
+        1;
+
+    showToast(
+        `Integrity flag: you ${reason}. This session will be logged as flagged.`,
+        "error"
+    );
+}
+
+function flagAndPauseActiveSession(
+    reason,
+    message
+) {
+    if (
+        !timer.running ||
+        timer.mode !==
+        "focus" ||
+        !state.settings.focusTracking
+    ) {
+        return;
+    }
+
+    timer.focusViolations +=
+        1;
+
+    timer.automaticallyPausedByBlur =
+        true;
+
+    pauseTimer(
         reason
+    );
+
+    updateTimerUI();
+
+    showToast(
+        message,
+        "error"
+    );
+}
+
+function handleVisibilityChange() {
+    if (
+        document.hidden
     ) {
         if (
-            !timer.pendingCompletion
+            isReflectionOrAssessmentOpen()
         ) {
-            return;
+            flagReflectionIntegrityBreach(
+                "left the platform during your reflection or quiz"
+            );
+
+        } else if (
+            timer.running &&
+            timer.mode ===
+            "focus" &&
+            state.settings.focusTracking
+        ) {
+            flagAndPauseActiveSession(
+                "Paused: left Study Companion",
+                "Session paused and flagged because you left the Study Companion."
+            );
         }
 
-        timer.pendingCompletion.focusViolations =
-            (
-                timer.pendingCompletion.focusViolations ||
-                0
-            ) +
-            1;
+        flushSaveState();
 
-        timer.pendingCompletion.checksFailed =
-            (
-                timer.pendingCompletion.checksFailed ||
-                0
-            ) +
-            1;
-
-        showToast(
-            `Integrity flag: you ${reason}. This session will be logged as flagged.`,
-            "error"
-        );
+        return;
     }
 
-    function handleVisibilityChange() {
-        if (
-            document.hidden
-        ) {
+    if (
+        timer.automaticallyPausedByBlur &&
+        timer.mode ===
+        "focus"
+    ) {
+        timer.automaticallyPausedByBlur =
+            false;
+
+        showToast(
+            "You returned to the Study Companion. The session remains paused because leaving the platform was flagged.",
+            "warning"
+        );
+    }
+}
+
+function handleWindowBlur() {
+    if (
+        document.hidden
+    ) {
+        return;
+    }
+
+    /*
+     * Give the browser a moment to settle.
+     * This prevents false positives for focus changes
+     * that still belong to this page.
+     */
+    window.setTimeout(
+        () => {
+            if (
+                document.hidden ||
+                document.hasFocus()
+            ) {
+                return;
+            }
+
             if (
                 isReflectionOrAssessmentOpen()
             ) {
                 flagReflectionIntegrityBreach(
-                    "left the tab during your reflection or quiz"
+                    "switched to another window or used split screen during your reflection or quiz"
                 );
 
-            } else if (
+                return;
+            }
+
+            if (
                 timer.running &&
                 timer.mode ===
                 "focus" &&
                 state.settings.focusTracking
             ) {
-                if (
-                    !isResourceViewerOpen()
-                ) {
-                    timer.focusViolations +=
-                        1;
-
-                    timer.automaticallyPausedByBlur =
-                        true;
-
-                    pauseTimer(
-                        "Paused: tab hidden"
-                    );
-
-                    updateTimerUI();
-                }
+                flagAndPauseActiveSession(
+                    "Paused: Study Companion lost focus",
+                    "Session paused and flagged because another window or application received focus."
+                );
             }
+        },
+        120
+    );
+}
 
-        } else if (
-            timer.automaticallyPausedByBlur &&
-            timer.mode ===
-            "focus"
-        ) {
-            timer.automaticallyPausedByBlur =
-                false;
-
-            showToast(
-                "The focus timer was paused because you left the study tab.",
-                "warning"
-            );
-        }
-
+function handleFullscreenChange() {
+    if (
+        isReflectionOrAssessmentOpen()
+    ) {
         if (
-            document.hidden
-        ) {
-            flushSaveState();
-        }
-    }
-
-    function handleWindowBlur() {
-        if (
-            document.hidden
-        ) {
-            return;
-        }
-
-        if (
-            isReflectionOrAssessmentOpen()
+            !document.fullscreenElement
         ) {
             flagReflectionIntegrityBreach(
-                "switched away or split your screen during your reflection or quiz"
-            );
-
-            return;
-        }
-
-        if (
-            timer.running &&
-            timer.mode ===
-            "focus" &&
-            state.settings.focusTracking
-        ) {
-            if (
-                isResourceViewerOpen()
-            ) {
-                return;
-            }
-
-            timer.focusViolations +=
-                1;
-
-            timer.automaticallyPausedByBlur =
-                true;
-
-            pauseTimer(
-                "Paused: window lost focus"
-            );
-
-            updateTimerUI();
-
-            showToast(
-                "The focus timer was paused because this window lost focus — this can happen when another window is snapped alongside it.",
-                "warning"
+                "left full screen during your reflection or quiz"
             );
         }
+
+        return;
     }
 
-    function handleFullscreenChange() {
-        if (
-            isReflectionOrAssessmentOpen()
-        ) {
-            if (
-                !document.fullscreenElement
-            ) {
-                flagReflectionIntegrityBreach(
-                    "exited fullscreen during your reflection or quiz"
-                );
-            }
+    if (
+        timer.running &&
+        timer.mode ===
+        "focus" &&
+        state.settings.focusTracking &&
+        !document.fullscreenElement
+    ) {
+        flagAndPauseActiveSession(
+            "Paused: full screen exited",
+            "Session paused and flagged because full screen was exited."
+        );
+    }
+}
 
-            return;
-        }
-
-        if (
-            !document.fullscreenElement &&
-            timer.running &&
-            timer.mode ===
-            "focus" &&
-            state.settings.focusTracking
-        ) {
-            if (
-                isResourceViewerOpen()
-            ) {
-                return;
-            }
-
-            timer.focusViolations +=
-                1;
-
-            timer.automaticallyPausedByBlur =
-                true;
-
-            pauseTimer(
-                "Paused: left fullscreen"
-            );
-
-            updateTimerUI();
-
-            showToast(
-                "The focus timer was paused because you exited fullscreen — this can happen when sharing your screen or splitting the view.",
-                "warning"
-            );
-        }
+function handleSessionResize() {
+    if (
+        !timer.running ||
+        timer.mode !==
+        "focus" ||
+        !state.settings.focusTracking
+    ) {
+        return;
     }
 
-    // -------------------------------------------------------------
-    // EVENTS
-    // -------------------------------------------------------------
-
-    function bindEvents() {
-        els.navItems.forEach(
-            item => {
-                item.addEventListener(
-                    "click",
-                    () =>
-                        navigate(
-                            item.dataset.section
-                        )
-                );
-            }
+    /*
+     * A valid focus session must remain
+     * in browser fullscreen.
+     */
+    if (
+        !document.fullscreenElement
+    ) {
+        flagAndPauseActiveSession(
+            "Paused: study window changed",
+            "Session paused and flagged because the study window was resized or moved out of full screen."
         );
+    }
+}// -------------------------------------------------------------
+// EVENTS
+// -------------------------------------------------------------
 
-        document
-            .querySelectorAll(
-                "[data-go-to]"
-            )
-            .forEach(
-                button => {
-                    button.addEventListener(
-                        "click",
-                        () =>
-                            navigate(
-                                button.dataset.goTo
-                            )
-                    );
-                }
-            );
-
-        els.menuButton.addEventListener(
-            "click",
-            () =>
-                els.sidebar.classList.toggle(
-                    "open"
-                )
-        );
-
-        els.themeToggle.addEventListener(
-            "click",
-            () => {
-                state.settings.theme =
-                    state.settings.theme ===
-                    "dark"
-                        ? "light"
-                        : "dark";
-
-                saveState();
-                applyTheme();
-            }
-        );
-
-        els.modeTabs.forEach(
-            tab => {
-                tab.addEventListener(
-                    "click",
-                    () =>
-                        setTimerMode(
-                            tab.dataset.mode
-                        )
-                );
-            }
-        );
-
-        els.startPauseTimer.addEventListener(
-            "click",
-            toggleTimer
-        );
-
-        els.resetTimer.addEventListener(
-            "click",
-            resetTimer
-        );
-
-        els.skipTimer.addEventListener(
-            "click",
-            skipTimer
-        );
-
-        els.confirmPresence.addEventListener(
-            "click",
-            confirmPresence
-        );
-
-        els.sessionGoal.addEventListener(
-            "input",
-            () => {
-                els.goalCount.textContent =
-                    els.sessionGoal.value.length;
-            }
-        );
-
-        els.profileShortcut.addEventListener(
-            "click",
-            () =>
-                navigate(
-                    "profile"
-                )
-        );
-
-        els.openResourceModal.addEventListener(
-            "click",
-            () => {
-                els.resourceForm.reset();
-
-                updateFileDropDisplay();
-                toggleResourceFields();
-
-                openModal(
-                    els.resourceModal
-                );
-            }
-        );
-
-        els.resourceKind.addEventListener(
-            "change",
-            toggleResourceFields
-        );
-
-        els.resourceForm.addEventListener(
-            "submit",
-            saveResource
-        );
-
-        els.resourceSearch.addEventListener(
-            "input",
-            renderResources
-        );
-
-        els.resourceTypeFilter.addEventListener(
-            "change",
-            renderResources
-        );
-
-        els.closeWorkspace.addEventListener(
-            "click",
-            closeStudyWorkspace
-        );
-
-        if (
-            els.toggleWorkspaceFullscreen
-        ) {
-            els.toggleWorkspaceFullscreen.addEventListener(
-                "click",
-                toggleWorkspaceFullscreen
-            );
-        }
-
-        els.openTutorChat.addEventListener(
-            "click",
-            () =>
-                openTutorChatFor(
-                    timer.activeResourceId
-                )
-        );
-
-        els.tutorChatForm.addEventListener(
-            "submit",
-            sendTutorChatMessage
-        );
-
-        els.clearTutorChat.addEventListener(
-            "click",
-            resetTutorChat
-        );
-
-        if (
-            els.tutorChatAttachButton &&
-            els.tutorChatFileInput
-        ) {
-            els.tutorChatAttachButton.addEventListener(
+function bindEvents() {
+    els.navItems.forEach(
+        item => {
+            item.addEventListener(
                 "click",
                 () =>
-                    els.tutorChatFileInput.click()
-            );
-
-            els.tutorChatFileInput.addEventListener(
-                "change",
-                handleTutorFileSelected
+                    navigate(
+                        item.dataset.section
+                    )
             );
         }
+    );
 
-        els.tutorChatInput.addEventListener(
-            "keydown",
-            event => {
-                if (
-                    event.key ===
-                    "Enter" &&
-                    !event.shiftKey
-                ) {
-                    event.preventDefault();
-
-                    els.tutorChatForm.requestSubmit();
-                }
-            }
-        );
-
-        els.profileForm.addEventListener(
-            "submit",
-            saveProfile
-        );
-
-        [
-            els.profilePhotoButton,
-            els.changeProfilePhoto
-        ].forEach(
-            button =>
+    document
+        .querySelectorAll(
+            "[data-go-to]"
+        )
+        .forEach(
+            button => {
                 button.addEventListener(
                     "click",
                     () =>
-                        els.profilePhotoInput.click()
-                )
+                        navigate(
+                            button.dataset.goTo
+                        )
+                );
+            }
         );
 
-        els.profilePhotoInput.addEventListener(
-            "change",
-            uploadProfilePhoto
-        );
+    els.menuButton.addEventListener(
+        "click",
+        () =>
+            els.sidebar.classList.toggle(
+                "open"
+            )
+    );
 
-        els.removeProfilePhoto.addEventListener(
+    els.themeToggle.addEventListener(
+        "click",
+        () => {
+            state.settings.theme =
+                state.settings.theme ===
+                    "dark"
+                    ? "light"
+                    : "dark";
+
+            saveState();
+
+            applyTheme();
+        }
+    );
+
+    els.modeTabs.forEach(
+        tab => {
+            tab.addEventListener(
+                "click",
+                () =>
+                    setTimerMode(
+                        tab.dataset.mode
+                    )
+            );
+        }
+    );
+
+    els.startPauseTimer.addEventListener(
+        "click",
+        toggleTimer
+    );
+
+    els.resetTimer.addEventListener(
+        "click",
+        resetTimer
+    );
+
+    els.skipTimer.addEventListener(
+        "click",
+        skipTimer
+    );
+
+    els.confirmPresence.addEventListener(
+        "click",
+        confirmPresence
+    );
+
+    els.sessionGoal.addEventListener(
+        "input",
+        () => {
+            els.goalCount.textContent =
+                els.sessionGoal.value.length;
+        }
+    );
+
+    els.profileShortcut.addEventListener(
+        "click",
+        () =>
+            navigate(
+                "profile"
+            )
+    );
+
+    els.openResourceModal.addEventListener(
+        "click",
+        () => {
+            els.resourceForm.reset();
+
+            updateFileDropDisplay();
+
+            toggleResourceFields();
+
+            openModal(
+                els.resourceModal
+            );
+        }
+    );
+
+    els.resourceKind.addEventListener(
+        "change",
+        toggleResourceFields
+    );
+
+    els.resourceForm.addEventListener(
+        "submit",
+        saveResource
+    );
+
+    els.resourceSearch.addEventListener(
+        "input",
+        renderResources
+    );
+
+    els.resourceTypeFilter.addEventListener(
+        "change",
+        renderResources
+    );
+
+    els.closeWorkspace.addEventListener(
+        "click",
+        closeStudyWorkspace
+    );
+
+    if (
+        els.toggleWorkspaceFullscreen
+    ) {
+        els.toggleWorkspaceFullscreen.addEventListener(
             "click",
-            removeProfilePhoto
+            toggleWorkspaceFullscreen
         );
+    }
 
-        els.logoutButton.addEventListener(
-            "click",
-            logout
-        );
+    els.openTutorChat.addEventListener(
+        "click",
+        () =>
+            openTutorChatFor(
+                timer.activeResourceId
+            )
+    );
 
-        bindFileDropEvents();
+    els.tutorChatForm.addEventListener(
+        "submit",
+        sendTutorChatMessage
+    );
 
-        els.openTaskModal.addEventListener(
+    els.clearTutorChat.addEventListener(
+        "click",
+        resetTutorChat
+    );
+
+    if (
+        els.tutorChatAttachButton &&
+        els.tutorChatFileInput
+    ) {
+        els.tutorChatAttachButton.addEventListener(
             "click",
             () =>
-                openTaskEditor()
+                els.tutorChatFileInput.click()
         );
 
-        els.taskForm.addEventListener(
-            "submit",
-            saveTask
-        );
-
-        els.taskSearch.addEventListener(
-            "input",
-            renderTasks
-        );
-
-        els.priorityFilter.addEventListener(
+        els.tutorChatFileInput.addEventListener(
             "change",
-            renderTasks
+            handleTutorFileSelected
         );
+    }
 
-        document.addEventListener(
-            "click",
-            event => {
-                const closeButton =
-                    event.target.closest(
-                        "[data-close-modal]"
-                    );
+    els.tutorChatInput.addEventListener(
+        "keydown",
+        event => {
+            if (
+                event.key ===
+                "Enter" &&
+                !event.shiftKey
+            ) {
+                event.preventDefault();
 
-                if (closeButton) {
-                    closeModal(
-                        document.getElementById(
-                            closeButton.dataset.closeModal
-                        )
-                    );
-                }
-
-                const editButton =
-                    event.target.closest(
-                        "[data-edit-task]"
-                    );
-
-                if (editButton) {
-                    const task =
-                        state.tasks.find(
-                            item =>
-                                item.id ===
-                                editButton.dataset.editTask
-                        );
-
-                    if (task) {
-                        openTaskEditor(
-                            task
-                        );
-                    }
-                }
-
-                const deleteButton =
-                    event.target.closest(
-                        "[data-delete-task]"
-                    );
-
-                if (deleteButton) {
-                    deleteTask(
-                        deleteButton.dataset.deleteTask
-                    );
-                }
-
-                const moveButton =
-                    event.target.closest(
-                        "[data-move-task]"
-                    );
-
-                if (moveButton) {
-                    moveTask(
-                        moveButton.dataset.moveTask,
-                        moveButton.dataset.nextStatus
-                    );
-                }
-
-                const studyTaskButton =
-                    event.target.closest(
-                        "[data-study-task]"
-                    );
-
-                if (
-                    studyTaskButton
-                ) {
-                    startTaskStudy(
-                        studyTaskButton.dataset.studyTask
-                    );
-                }
-
-                const openResourceButton =
-                    event.target.closest(
-                        "[data-open-resource]"
-                    );
-
-                if (
-                    openResourceButton
-                ) {
-                    openStudyResource(
-                        openResourceButton.dataset.openResource
-                    );
-                }
-
-                const planResourceButton =
-                    event.target.closest(
-                        "[data-plan-resource]"
-                    );
-
-                if (
-                    planResourceButton
-                ) {
-                    planResourceTask(
-                        planResourceButton.dataset.planResource
-                    );
-                }
-
-                const deleteResourceButton =
-                    event.target.closest(
-                        "[data-delete-resource]"
-                    );
-
-                if (
-                    deleteResourceButton
-                ) {
-                    deleteResource(
-                        deleteResourceButton.dataset.deleteResource
-                    );
-                }
-
-                const reflectionButton =
-                    event.target.closest(
-                        "[data-view-reflection]"
-                    );
-
-                if (
-                    reflectionButton
-                ) {
-                    viewReflection(
-                        reflectionButton.dataset.viewReflection
-                    );
-                }
-
-                const resultsButton =
-                    event.target.closest(
-                        "[data-view-results]"
-                    );
-
-                if (
-                    resultsButton
-                ) {
-                    viewSessionResults(
-                        resultsButton.dataset.viewResults
-                    );
-                }
+                els.tutorChatForm.requestSubmit();
             }
-        );
+        }
+    );
 
-        document
-            .querySelectorAll(
-                ".modal-backdrop"
-            )
-            .forEach(
-                backdrop => {
-                    backdrop.addEventListener(
-                        "mousedown",
-                        event => {
-                            if (
-                                event.target !==
-                                backdrop
-                            ) {
-                                return;
-                            }
+    els.profileForm.addEventListener(
+        "submit",
+        saveProfile
+    );
 
-                            if (
-                                [
-                                    els.verificationModal,
-                                    els.reflectionModal
-                                ].includes(
-                                    backdrop
-                                )
-                            ) {
-                                return;
-                            }
-
-                            closeModal(
-                                backdrop
-                            );
-                        }
-                    );
-                }
-            );
-
-        els.reflectionText.addEventListener(
-            "input",
-            validateReflection
-        );
-
-        els.assessmentForm.addEventListener(
-            "submit",
-            submitAssessment
-        );
-
-        els.backToReflection.addEventListener(
-            "click",
-            backToReflection
-        );
-
-        [
-            "paste",
-            "copy",
-            "cut",
-            "drop"
-        ].forEach(
-            eventName => {
-                els.reflectionText.addEventListener(
-                    eventName,
-                    event => {
-                        event.preventDefault();
-
-                        showToast(
-                            "Copy and paste are disabled for session reflections.",
-                            "warning"
-                        );
-                    }
-                );
-            }
-        );
-
-        els.reflectionText.addEventListener(
-            "contextmenu",
-            event =>
-                event.preventDefault()
-        );
-
-        els.saveReflection.addEventListener(
-            "click",
-            saveReflection
-        );
-
-        els.discardSession.addEventListener(
-            "click",
-            discardSession
-        );
-
-        els.clearHistory.addEventListener(
-            "click",
-            () => {
-                if (
-                    !state.sessions.length
-                ) {
-                    return;
-                }
-
-                if (
-                    !window.confirm(
-                        "Clear all saved session history?"
-                    )
-                ) {
-                    return;
-                }
-
-                state.sessions =
-                    [];
-
-                saveState();
-                renderAll();
-
-                showToast(
-                    "Session history cleared.",
-                    "warning"
-                );
-            }
-        );
-
-        els.saveSettings.addEventListener(
-            "click",
-            saveSettings
-        );
-
-        els.resetAllData.addEventListener(
-            "click",
-            resetAllData
-        );
-
-        if (
-            els.migrateToB2
-        ) {
-            els.migrateToB2.addEventListener(
+    [
+        els.profilePhotoButton,
+        els.changeProfilePhoto
+    ].forEach(
+        button =>
+            button.addEventListener(
                 "click",
-                migrateResourcesToB2
-            );
-        }
+                () =>
+                    els.profilePhotoInput.click()
+            )
+    );
 
-        document.addEventListener(
-            "visibilitychange",
-            handleVisibilityChange
-        );
+    els.profilePhotoInput.addEventListener(
+        "change",
+        uploadProfilePhoto
+    );
 
-        document.addEventListener(
-            "fullscreenchange",
-            handleFullscreenChange
-        );
+    els.removeProfilePhoto.addEventListener(
+        "click",
+        removeProfilePhoto
+    );
 
-        window.addEventListener(
-            "blur",
-            handleWindowBlur
-        );
+    els.logoutButton.addEventListener(
+        "click",
+        logout
+    );
 
-        window.addEventListener(
-            "beforeunload",
-            event => {
-                if (
-                    timer.running &&
-                    timer.mode ===
-                    "focus"
-                ) {
-                    event.preventDefault();
+    bindFileDropEvents();
 
-                    event.returnValue =
-                        "";
-                }
+    els.openTaskModal.addEventListener(
+        "click",
+        () =>
+            openTaskEditor()
+    );
 
-                flushSaveState();
+    els.taskForm.addEventListener(
+        "submit",
+        saveTask
+    );
+
+    els.taskSearch.addEventListener(
+        "input",
+        renderTasks
+    );
+
+    els.priorityFilter.addEventListener(
+        "change",
+        renderTasks
+    );
+
+    document.addEventListener(
+        "click",
+        event => {
+            const closeButton =
+                event.target.closest(
+                    "[data-close-modal]"
+                );
+
+            if (closeButton) {
+                closeModal(
+                    document.getElementById(
+                        closeButton.dataset.closeModal
+                    )
+                );
             }
-        );
 
-        document.addEventListener(
-            "keydown",
-            event => {
-                if (
-                    event.key ===
-                    "Escape"
-                ) {
-                    [
-                        els.taskModal,
-                        els.resourceModal,
-                        els.reflectionViewModal
-                    ].forEach(
-                        modal =>
-                            closeModal(
-                                modal
-                            )
+            const editButton =
+                event.target.closest(
+                    "[data-edit-task]"
+                );
+
+            if (editButton) {
+                const task =
+                    state.tasks.find(
+                        item =>
+                            item.id ===
+                            editButton.dataset.editTask
+                    );
+
+                if (task) {
+                    openTaskEditor(
+                        task
                     );
                 }
+            }
 
-                if (
-                    event.code ===
-                    "Space" &&
-                    document.activeElement ===
-                    document.body
-                ) {
-                    event.preventDefault();
+            const deleteButton =
+                event.target.closest(
+                    "[data-delete-task]"
+                );
 
-                    toggleTimer();
-                }
+            if (deleteButton) {
+                deleteTask(
+                    deleteButton.dataset.deleteTask
+                );
+            }
+
+            const moveButton =
+                event.target.closest(
+                    "[data-move-task]"
+                );
+
+            if (moveButton) {
+                moveTask(
+                    moveButton.dataset.moveTask,
+                    moveButton.dataset.nextStatus
+                );
+            }
+
+            const studyTaskButton =
+                event.target.closest(
+                    "[data-study-task]"
+                );
+
+            if (
+                studyTaskButton
+            ) {
+                startTaskStudy(
+                    studyTaskButton.dataset.studyTask
+                );
+            }
+
+            const openResourceButton =
+                event.target.closest(
+                    "[data-open-resource]"
+                );
+
+            if (
+                openResourceButton
+            ) {
+                openStudyResource(
+                    openResourceButton.dataset.openResource
+                );
+            }
+
+            const planResourceButton =
+                event.target.closest(
+                    "[data-plan-resource]"
+                );
+
+            if (
+                planResourceButton
+            ) {
+                planResourceTask(
+                    planResourceButton.dataset.planResource
+                );
+            }
+
+            const deleteResourceButton =
+                event.target.closest(
+                    "[data-delete-resource]"
+                );
+
+            if (
+                deleteResourceButton
+            ) {
+                deleteResource(
+                    deleteResourceButton.dataset.deleteResource
+                );
+            }
+
+            const reflectionButton =
+                event.target.closest(
+                    "[data-view-reflection]"
+                );
+
+            if (
+                reflectionButton
+            ) {
+                viewReflection(
+                    reflectionButton.dataset.viewReflection
+                );
+            }
+
+            const resultsButton =
+                event.target.closest(
+                    "[data-view-results]"
+                );
+
+            if (
+                resultsButton
+            ) {
+                viewSessionResults(
+                    resultsButton.dataset.viewResults
+                );
+            }
+        }
+    );
+
+    document
+        .querySelectorAll(
+            ".modal-backdrop"
+        )
+        .forEach(
+            backdrop => {
+                backdrop.addEventListener(
+                    "mousedown",
+                    event => {
+                        if (
+                            event.target !==
+                            backdrop
+                        ) {
+                            return;
+                        }
+
+                        if (
+                            [
+                                els.verificationModal,
+                                els.reflectionModal
+                            ].includes(
+                                backdrop
+                            )
+                        ) {
+                            return;
+                        }
+
+                        closeModal(
+                            backdrop
+                        );
+                    }
+                );
             }
         );
-    }
 
-    // -------------------------------------------------------------
-    // APP INITIALISATION
-    // -------------------------------------------------------------
+    els.reflectionText.addEventListener(
+        "input",
+        validateReflection
+    );
 
-    async function launchApp(
-        user,
-        signupName = ""
-    ) {
-        currentUser =
-            user;
+    els.assessmentForm.addEventListener(
+        "submit",
+        submitAssessment
+    );
 
-        state =
-            await loadState(
-                user.id
-            );
+    els.backToReflection.addEventListener(
+        "click",
+        backToReflection
+    );
 
-        state.profile.email =
-            user.email ||
-            state.profile.email;
+    [
+        "paste",
+        "copy",
+        "cut",
+        "drop"
+    ].forEach(
+        eventName => {
+            els.reflectionText.addEventListener(
+                eventName,
+                event => {
+                    event.preventDefault();
 
-        if (signupName) {
-            state.profile.name =
-                signupName;
-
-        } else if (
-            user.user_metadata?.full_name
-        ) {
-            state.profile.name =
-                user.user_metadata.full_name;
-        }
-
-        saveState();
-
-        els.authShell.classList.add(
-            "hidden"
-        );
-
-        els.appShell.classList.remove(
-            "hidden"
-        );
-
-        const now =
-            new Date();
-
-        els.todayLabel.textContent =
-            new Intl.DateTimeFormat(
-                "en-NG",
-                {
-                    weekday:
-                        "long",
-
-                    day:
-                        "numeric",
-
-                    month:
-                        "long"
+                    showToast(
+                        "Copy and paste are disabled for session reflections.",
+                        "warning"
+                    );
                 }
-            ).format(
-                now
             );
-
-        applyTheme();
-        populateSettings();
-        renderAll();
-
-        setTimerMode(
-            "focus",
-            true
-        );
-
-        navigate(
-            "dashboard"
-        );
-    }
-
-    async function initialise() {
-        initialiseAuth();
-        bindEvents();
-
-        const user =
-            await getCurrentUser();
-
-        if (!user) {
-            els.authShell.classList.remove(
-                "hidden"
-            );
-
-            els.appShell.classList.add(
-                "hidden"
-            );
-
-            return;
         }
+    );
 
-        await launchApp(
-            user
+    els.reflectionText.addEventListener(
+        "contextmenu",
+        event =>
+            event.preventDefault()
+    );
+
+    els.saveReflection.addEventListener(
+        "click",
+        saveReflection
+    );
+
+    els.discardSession.addEventListener(
+        "click",
+        discardSession
+    );
+
+    els.clearHistory.addEventListener(
+        "click",
+        () => {
+            if (
+                !state.sessions.length
+            ) {
+                return;
+            }
+
+            if (
+                !window.confirm(
+                    "Clear all saved session history?"
+                )
+            ) {
+                return;
+            }
+
+            state.sessions =
+                [];
+
+            saveState();
+
+            renderAll();
+
+            showToast(
+                "Session history cleared.",
+                "warning"
+            );
+        }
+    );
+
+    els.saveSettings.addEventListener(
+        "click",
+        saveSettings
+    );
+
+    els.resetAllData.addEventListener(
+        "click",
+        resetAllData
+    );
+
+    if (
+        els.migrateToB2
+    ) {
+        els.migrateToB2.addEventListener(
+            "click",
+            migrateResourcesToB2
         );
     }
 
-    initialise();
-})();
+    /*
+     * Focus integrity listeners.
+     */
+    document.addEventListener(
+        "visibilitychange",
+        handleVisibilityChange
+    );
+
+    document.addEventListener(
+        "fullscreenchange",
+        handleFullscreenChange
+    );
+
+    window.addEventListener(
+        "blur",
+        handleWindowBlur
+    );
+
+    window.addEventListener(
+        "resize",
+        handleSessionResize
+    );
+
+    window.addEventListener(
+        "beforeunload",
+        event => {
+            if (
+                timer.running &&
+                timer.mode ===
+                "focus"
+            ) {
+                event.preventDefault();
+
+                event.returnValue =
+                    "";
+            }
+
+            flushSaveState();
+        }
+    );
+
+    document.addEventListener(
+        "keydown",
+        event => {
+            if (
+                event.key ===
+                "Escape"
+            ) {
+                [
+                    els.taskModal,
+                    els.resourceModal,
+                    els.reflectionViewModal
+                ].forEach(
+                    modal =>
+                        closeModal(
+                            modal
+                        )
+                );
+            }
+
+            if (
+                event.code ===
+                "Space" &&
+                document.activeElement ===
+                document.body
+            ) {
+                event.preventDefault();
+
+                toggleTimer();
+            }
+        }
+    );
+}
+
+// -------------------------------------------------------------
+// APP INITIALISATION
+// -------------------------------------------------------------
+
+async function launchApp(
+    user,
+    signupName = ""
+) {
+    currentUser =
+        user;
+
+    state =
+        await loadState(
+            user.id
+        );
+
+    state.profile.email =
+        user.email ||
+        state.profile.email;
+
+    if (signupName) {
+        state.profile.name =
+            signupName;
+
+    } else if (
+        user.user_metadata?.full_name
+    ) {
+        state.profile.name =
+            user.user_metadata.full_name;
+    }
+
+    saveState();
+
+    els.authShell.classList.add(
+        "hidden"
+    );
+
+    els.appShell.classList.remove(
+        "hidden"
+    );
+
+    const now =
+        new Date();
+
+    els.todayLabel.textContent =
+        new Intl.DateTimeFormat(
+            "en-NG",
+            {
+                weekday:
+                    "long",
+
+                day:
+                    "numeric",
+
+                month:
+                    "long"
+            }
+        ).format(
+            now
+        );
+
+    applyTheme();
+
+    populateSettings();
+
+    renderAll();
+
+    setTimerMode(
+        "focus",
+        true
+    );
+
+    navigate(
+        "dashboard"
+    );
+}
+
+async function initialise() {
+    initialiseAuth();
+
+    bindEvents();
+
+    const user =
+        await getCurrentUser();
+
+    if (!user) {
+        els.authShell.classList.remove(
+            "hidden"
+        );
+
+        els.appShell.classList.add(
+            "hidden"
+        );
+
+        return;
+    }
+
+    await launchApp(
+        user
+    );
+}
+
+initialise();
+
+}) ();
