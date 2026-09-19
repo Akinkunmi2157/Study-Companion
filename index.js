@@ -387,7 +387,8 @@
         pendingAssessment: null,
         activeResourceId: null,
 
-        backgroundPrep: null
+        backgroundPrep: null,
+        acceptedReflection: null
     };
 
     const tutorChat = {
@@ -4759,6 +4760,8 @@ Delete
         els.saveReflection.disabled =
             true;
 
+        timer.acceptedReflection = null;
+        // Prepare resource text only; never generate questions before acceptance.
         startBackgroundAssessmentPrep(
             resource,
             task
@@ -4809,7 +4812,7 @@ Delete
         }
     }
 
-    function validateReflection() {
+    function validateReflection(preserveStatus = false) {
         const value =
             els.reflectionText.value.trim();
 
@@ -4885,11 +4888,10 @@ Delete
                 ? ""
                 : "Write at least 40 characters using seven or more varied, meaningful words.";
 
-        els.reflectionAlignment.className =
-            "alignment-status";
-
-        els.reflectionAlignment.textContent =
-            "";
+        if (!preserveStatus) {
+            els.reflectionAlignment.className = "alignment-status";
+            els.reflectionAlignment.textContent = "";
+        }
     }
 
     function stripCodeFence(
@@ -5404,9 +5406,7 @@ Delete
                                 ? renderMarkdown(
                                     msg.text
                                 )
-                                : escapeHtml(
-                                    msg.text
-                                );
+                                : `<p class="tutor-user-text">${escapeHtml(msg.text)}</p>`;
 
                         return `
 <div class="tutor-msg ${msg.role ===
@@ -5938,10 +5938,10 @@ aria-label="Remove attachment"
         30;
 
     const ASSESSMENT_BATCH_SIZE =
-        5;
+        3;
 
     const ASSESSMENT_BATCH_CONCURRENCY =
-        1;
+        2;
 
     function computeQuestionCount(
         resourceText
@@ -6227,7 +6227,8 @@ IMPORTANT:
 - Every options array must contain EXACTLY 4 strings.
 - correctAnswer must only be 0, 1, 2, or 3.
 - Do not place commas after the final array/object item.
-- Keep explanations concise.
+- Keep each question under 170 characters, each option under 90 characters, and each explanation under 140 characters.
+- Never wrap JSON in a string or include trailing text.
 - Output JSON immediately.`;
 
         let lastError =
@@ -6680,64 +6681,11 @@ Rules:
                 resource
             );
 
-        const questionsPromise =
-            resourceTextPromise.then(
-                async resourceText => {
-                    if (
-                        !resourceText ||
-                        resourceText
-                            .trim()
-                            .length <
-                        30
-                    ) {
-                        return {
-                            questionCount:
-                                0,
-
-                            questions:
-                                null
-                        };
-                    }
-
-                    const questionCount =
-                        computeQuestionCount(
-                            resourceText
-                        );
-
-                    try {
-                        const questions =
-                            await generateAssessmentQuestions(
-                                resourceText,
-                                questionCount,
-                                resource,
-                                task
-                            );
-
-                        return {
-                            questionCount,
-                            questions
-                        };
-
-                    } catch (error) {
-                        console.warn(
-                            "Background quiz generation failed — falling back to post-summary generation.",
-                            error
-                        );
-
-                        return {
-                            questionCount,
-
-                            questions:
-                                null
-                        };
-                    }
-                }
-            );
-
+        // No quiz requests may be made while the student is writing or
+        // while their reflection is still awaiting verification.
         timer.backgroundPrep = {
             resourceId,
-            resourceTextPromise,
-            questionsPromise
+            resourceTextPromise
         };
     }
 
@@ -6819,376 +6767,330 @@ ${escapeHtml(
         els.assessmentValidation.textContent =
             "";
     }
-async function saveReflection() {
-    if (
-        !timer.pendingCompletion ||
-        els.saveReflection.disabled
-    ) {
-        return;
-    }
-
-    const task =
-        state.tasks.find(
-            item =>
-                item.id ===
-                timer.pendingCompletion.taskId
-        );
-
-    const resourceId =
-        task?.resourceId ||
-        timer.pendingCompletion.resourceId;
-
-    const resource =
-        resourceId
-            ? getResource(
-                resourceId
-            )
-            : null;
-
-    const summary =
-        els.reflectionText.value.trim();
-
-    if (!resource) {
-        showToast(
-            "Link a study resource to this task before the summary can be verified.",
-            "error"
-        );
-        return;
-    }
-
-    els.saveReflection.disabled =
-        true;
-
-    els.saveReflection.textContent =
-        "Checking summary…";
-
-    els.reflectionAlignment.className =
-        "alignment-status visible";
-
-    els.reflectionAlignment.textContent =
-        "Checking your understanding of the topic…";
-
-    try {
-        const bg =
-            timer.backgroundPrep &&
-                timer.backgroundPrep.resourceId ===
-                resource.id
-                ? timer.backgroundPrep
-                : null;
-
-        /*
-        * We only wait for resource extraction here.
-        * Quiz generation continues independently.
-        */
-        const resourceText =
-            bg
-                ? await bg.resourceTextPromise
-                : await extractResourceStudyText(
-                    resource
-                );
-
+    async function saveReflection() {
         if (
-            !resourceText ||
-            resourceText
-                .trim()
-                .length <
-            30
+            !timer.pendingCompletion ||
+            els.saveReflection.disabled
         ) {
-            throw new Error(
-                "There is not enough readable resource content to verify the summary. Add detailed resource notes or upload a readable PDF/text file."
-            );
-        }
-
-        /*
-        * Summary verification happens immediately.
-        */
-        const alignment =
-            await checkSummaryAlignment(
-                summary,
-                resource,
-                task,
-                resourceText
-            );
-
-        if (!alignment.aligned) {
-            els.reflectionAlignment.className =
-                "alignment-status visible mismatch";
-
-            els.reflectionAlignment.textContent =
-                `${alignment.feedback} Alignment score: ${alignment.alignmentScore}%. Revise the summary before continuing.`;
-
             return;
         }
 
-        /*
-        * The summary is valid at this point.
-        *
-        * Quiz-generation failure must never be reported
-        * as summary-verification failure.
-        */
-        let questionCount =
-            computeQuestionCount(
-                resourceText
+        const task =
+            state.tasks.find(
+                item =>
+                    item.id ===
+                    timer.pendingCompletion.taskId
             );
 
-        let questions =
-            null;
+        const resourceId =
+            task?.resourceId ||
+            timer.pendingCompletion.resourceId;
 
-        if (bg) {
-            try {
-                const prepared =
-                    await bg.questionsPromise;
+        const resource =
+            resourceId
+                ? getResource(
+                    resourceId
+                )
+                : null;
 
-                if (prepared) {
-                    questionCount =
-                        prepared.questionCount ||
-                        questionCount;
+        const summary =
+            els.reflectionText.value.trim();
 
-                    questions =
-                        prepared.questions ||
-                        null;
-                }
-
-            } catch (error) {
-                console.warn(
-                    "Background assessment preparation failed. Using fallback generation.",
-                    error
-                );
-
-                questions =
-                    null;
-            }
+        if (!resource) {
+            showToast(
+                "Link a study resource to this task before the summary can be verified.",
+                "error"
+            );
+            return;
         }
 
-        if (!questions) {
-            els.reflectionAlignment.className =
-                "alignment-status visible match";
+        els.saveReflection.disabled =
+            true;
 
-            els.reflectionAlignment.textContent =
-                "Summary confirmed. Preparing your assessment…";
+        els.saveReflection.textContent =
+            "Checking summary…";
 
-            try {
-                questions =
-                    await generateAssessmentQuestions(
-                        resourceText,
-                        questionCount,
-                        resource,
-                        task
+        els.reflectionAlignment.className =
+            "alignment-status visible";
+
+        els.reflectionAlignment.textContent =
+            "Checking your understanding of the topic…";
+
+        try {
+            const bg =
+                timer.backgroundPrep &&
+                    timer.backgroundPrep.resourceId ===
+                    resource.id
+                    ? timer.backgroundPrep
+                    : null;
+
+            /*
+            * We only wait for resource extraction here.
+            * Quiz generation continues independently.
+            */
+            const resourceText =
+                bg
+                    ? await bg.resourceTextPromise
+                    : await extractResourceStudyText(
+                        resource
                     );
 
-            } catch (error) {
-                console.error(
-                    "Assessment generation failed after summary was accepted.",
-                    error
+            if (
+                !resourceText ||
+                resourceText
+                    .trim()
+                    .length <
+                30
+            ) {
+                throw new Error(
+                    "There is not enough readable resource content to verify the summary. Add detailed resource notes or upload a readable PDF/text file."
                 );
+            }
 
-                /*
-                * The reflection has already passed.
-                * Do not tell the student the reflection failed.
-                */
+            /*
+            * Summary verification happens immediately.
+            */
+            const accepted = timer.acceptedReflection;
+            const alignment = accepted?.resourceId === resource.id &&
+                accepted.summary === summary
+                ? accepted.alignment
+                : await checkSummaryAlignment(summary, resource, task, resourceText);
+            if (!alignment.aligned) {
                 els.reflectionAlignment.className =
                     "alignment-status visible mismatch";
 
                 els.reflectionAlignment.textContent =
-                    "Your summary was accepted, but the assessment could not be prepared. Please click Continue again to retry.";
+                    `${alignment.feedback} Alignment score: ${alignment.alignmentScore}%. Revise the summary before continuing.`;
 
                 return;
             }
-        }
 
-        /*
-        * Final question cap.
-        */
-        questions =
-            questions.slice(
-                0,
-                MAX_ASSESSMENT_QUESTIONS
+            timer.acceptedReflection = { resourceId: resource.id, summary, alignment };
+            els.reflectionAlignment.className = "alignment-status visible match";
+            els.reflectionAlignment.textContent =
+                "Summary accepted. Generating your quiz now…";
+            els.saveReflection.textContent = "Generating quiz…";
+
+            /*
+            * The summary is valid at this point.
+            *
+            * Quiz-generation failure must never be reported
+            * as summary-verification failure.
+            */
+            let questionCount =
+                computeQuestionCount(
+                    resourceText
+                );
+
+            let questions;
+            try {
+                // Strict order: accepted summary -> quiz generation.
+                questions = await generateAssessmentQuestions(
+                    resourceText, questionCount, resource, task
+                );
+            } catch (error) {
+                console.error("Assessment generation failed after summary acceptance:", error);
+                els.reflectionAlignment.className = "alignment-status visible mismatch";
+                els.reflectionAlignment.textContent =
+                    `Your summary is accepted, but the quiz could not be generated. ${describeAiError(error)} Select Retry quiz to try again without rechecking your summary.`;
+                els.saveReflection.textContent = "Retry quiz";
+                return;
+            }
+
+            /*
+            * Final question cap.
+            */
+            questions =
+                questions.slice(
+                    0,
+                    MAX_ASSESSMENT_QUESTIONS
+                );
+
+            const assessment = {
+                aligned:
+                    alignment.aligned,
+
+                alignmentScore:
+                    alignment.alignmentScore,
+
+                feedback:
+                    alignment.feedback,
+
+                objectiveQuestions:
+                    questions
+            };
+
+            timer.pendingAssessment = {
+                assessment,
+                summary,
+
+                resourceId:
+                    resource.id
+            };
+
+            timer.backgroundPrep =
+                null;
+
+            renderAssessment(
+                assessment
             );
 
-        const assessment = {
-            aligned:
-                alignment.aligned,
+            closeModal(
+                els.reflectionModal
+            );
 
-            alignmentScore:
-                alignment.alignmentScore,
+            openModal(
+                els.assessmentModal
+            );
 
-            feedback:
-                alignment.feedback,
-
-            objectiveQuestions:
-                questions
-        };
-
-        timer.pendingAssessment = {
-            assessment,
-            summary,
-
-            resourceId:
-                resource.id
-        };
-
-        timer.backgroundPrep =
-            null;
-
-        renderAssessment(
-            assessment
-        );
-
-        closeModal(
-            els.reflectionModal
-        );
-
-        openModal(
-            els.assessmentModal
-        );
-
-    } catch (error) {
-        console.error(
-            "Reflection verification failed:",
-            error
-        );
-
-        els.reflectionAlignment.className =
-            "alignment-status visible mismatch";
-
-        els.reflectionAlignment.textContent =
-            describeAiError(
+        } catch (error) {
+            console.error(
+                "Reflection verification failed:",
                 error
             );
 
-    } finally {
-        els.saveReflection.textContent =
-            "Check summary & continue";
+            els.reflectionAlignment.className =
+                "alignment-status visible mismatch";
 
-        if (
-            typeof validateReflection ===
-            "function"
-        ) {
-            validateReflection();
+            els.reflectionAlignment.textContent =
+                describeAiError(
+                    error
+                );
 
-        } else {
-            els.saveReflection.disabled =
-                false;
+        } finally {
+            els.saveReflection.textContent = timer.acceptedReflection?.summary ===
+                els.reflectionText.value.trim() &&
+                timer.acceptedReflection?.resourceId === resourceId
+                ? "Retry quiz" : "Check summary & continue";
+
+            if (
+                typeof validateReflection ===
+                "function"
+            ) {
+                validateReflection(true);
+
+            } else {
+                els.saveReflection.disabled = false;
+            }
         }
     }
-}
 
-// -------------------------------------------------------------
-// ASSESSMENT RESULT REVIEW
-// -------------------------------------------------------------
+    // -------------------------------------------------------------
+    // ASSESSMENT RESULT REVIEW
+    // -------------------------------------------------------------
 
-function openAssessmentResultsModal(
-    assessment,
-    objectiveAnswers,
-    objectiveScore,
-    onContinue
-) {
-    const backdrop =
-        document.createElement(
-            "div"
-        );
+    function openAssessmentResultsModal(
+        assessment,
+        objectiveAnswers,
+        objectiveScore,
+        onContinue
+    ) {
+        const backdrop =
+            document.createElement(
+                "div"
+            );
 
-    backdrop.className =
-        "modal-backdrop";
+        backdrop.className =
+            "modal-backdrop";
 
-    const objectiveHtml =
-        assessment.objectiveQuestions
-            .map(
-                (
-                    item,
-                    index
-                ) => {
-                    const selected =
-                        objectiveAnswers[
+        const objectiveHtml =
+            assessment.objectiveQuestions
+                .map(
+                    (
+                        item,
                         index
-                        ];
+                    ) => {
+                        const selected =
+                            objectiveAnswers[
+                            index
+                            ];
 
-                    const correct =
-                        item.correctAnswer;
+                        const correct =
+                            item.correctAnswer;
 
-                    const isCorrect =
-                        selected ===
-                        correct;
+                        const isCorrect =
+                            selected ===
+                            correct;
 
-                    const optionsHtml =
-                        item.options
-                            .map(
-                                (
-                                    option,
-                                    optionIndex
-                                ) => {
-                                    let marker =
-                                        "";
+                        const optionsHtml =
+                            item.options
+                                .map(
+                                    (
+                                        option,
+                                        optionIndex
+                                    ) => {
+                                        let marker =
+                                            "";
 
-                                    let style =
-                                        "";
+                                        let style =
+                                            "";
 
-                                    if (
-                                        optionIndex ===
-                                        correct
-                                    ) {
-                                        marker =
-                                            "✓ ";
+                                        if (
+                                            optionIndex ===
+                                            correct
+                                        ) {
+                                            marker =
+                                                "✓ ";
 
-                                        style =
-                                            "color:var(--success);font-weight:700;";
+                                            style =
+                                                "color:var(--success);font-weight:700;";
 
-                                    } else if (
-                                        optionIndex ===
-                                        selected
-                                    ) {
-                                        marker =
-                                            "✗ ";
+                                        } else if (
+                                            optionIndex ===
+                                            selected
+                                        ) {
+                                            marker =
+                                                "✗ ";
 
-                                        style =
-                                            "color:var(--danger);font-weight:700;";
-                                    }
+                                            style =
+                                                "color:var(--danger);font-weight:700;";
+                                        }
 
-                                    return `
+                                        return `
 <label
 class="assessment-option"
 style="${style}"
 >
 <span>
 ${marker}${escapeHtml(
-                                        option
-                                    )}
+                                            option
+                                        )}
 </span>
 </label>
 `;
-                                }
-                            )
-                            .join("");
+                                    }
+                                )
+                                .join("");
 
-                    return `
+                        return `
 <fieldset class="assessment-question">
 <legend>
 ${index + 1}.
 ${escapeHtml(
-                        item.question
-                    )}
+                            item.question
+                        )}
 
 <span
 style="
 margin-left:8px;
 font-weight:800;
 color:${isCorrect
-                            ? "var(--success)"
-                            : "var(--danger)"
-                        };
+                                ? "var(--success)"
+                                : "var(--danger)"
+                            };
 "
 >
 ${isCorrect
-                            ? "Correct"
-                            : "Incorrect"
-                        }
+                                ? "Correct"
+                                : "Incorrect"
+                            }
 </span>
 </legend>
 
 ${optionsHtml}
 
 ${item.explanation
-                            ? `
+                                ? `
 <p
 style="
 margin:12px 4px 0;
@@ -7204,20 +7106,20 @@ Why:
 </strong>
 
 ${escapeHtml(
-                                item.explanation
-                            )}
+                                    item.explanation
+                                )}
 </p>
 `
-                            : ""
-                        }
+                                : ""
+                            }
 </fieldset>
 `;
-                }
-            )
-            .join("");
+                    }
+                )
+                .join("");
 
-    backdrop.innerHTML =
-        `
+        backdrop.innerHTML =
+            `
 <div class="modal-card assessment-card">
 <div class="modal-header">
 <div>
@@ -7232,10 +7134,10 @@ Review your answers
 </div>
 
 <div class="assessment-summary-status ${objectiveScore >=
-            3
-            ? "match"
-            : "mismatch"
-        }">
+                3
+                ? "match"
+                : "mismatch"
+            }">
 <strong>
 Grade:
 ${objectiveScore}/${assessment.objectiveQuestions.length}
@@ -7267,421 +7169,421 @@ Continue
 </div>
 `;
 
-    document.body.appendChild(
-        backdrop
-    );
+        document.body.appendChild(
+            backdrop
+        );
 
-    openModal(
-        backdrop
-    );
+        openModal(
+            backdrop
+        );
 
-    const finish =
-        () => {
-            closeModal(
-                backdrop
+        const finish =
+            () => {
+                closeModal(
+                    backdrop
+                );
+
+                backdrop.remove();
+
+                if (
+                    typeof onContinue ===
+                    "function"
+                ) {
+                    onContinue();
+                }
+            };
+
+        backdrop
+            .querySelector(
+                "#closeAssessmentResultsButton"
+            )
+            .addEventListener(
+                "click",
+                finish
             );
 
-            backdrop.remove();
-
-            if (
-                typeof onContinue ===
-                "function"
-            ) {
-                onContinue();
+        backdrop.addEventListener(
+            "mousedown",
+            event => {
+                if (
+                    event.target ===
+                    backdrop
+                ) {
+                    finish();
+                }
             }
+        );
+    }
+
+    function submitAssessment(
+        event
+    ) {
+        event.preventDefault();
+
+        if (
+            !timer.pendingCompletion ||
+            !timer.pendingAssessment
+        ) {
+            return;
+        }
+
+        const {
+            assessment,
+            summary,
+            resourceId
+        } =
+            timer.pendingAssessment;
+
+        const objectiveAnswers =
+            assessment.objectiveQuestions.map(
+                (
+                    _,
+                    index
+                ) => {
+                    const selected =
+                        els.assessmentForm.querySelector(
+                            `input[name="objective-${index}"]:checked`
+                        );
+
+                    return selected
+                        ? Number(
+                            selected.value
+                        )
+                        : null;
+                }
+            );
+
+        if (
+            objectiveAnswers.some(
+                answer =>
+                    answer ===
+                    null
+            )
+        ) {
+            els.assessmentValidation.textContent =
+                `Answer all ${assessment.objectiveQuestions.length} questions before submitting.`;
+
+            return;
+        }
+
+        const objectiveScore =
+            objectiveAnswers.reduce(
+                (
+                    score,
+                    answer,
+                    index
+                ) =>
+                    score +
+                    (
+                        answer ===
+                            assessment.objectiveQuestions[
+                                index
+                            ].correctAnswer
+                            ? 1
+                            : 0
+                    ),
+                0
+            );
+
+        const task =
+            state.tasks.find(
+                item =>
+                    item.id ===
+                    timer.pendingCompletion.taskId
+            );
+
+        const session = {
+            id:
+                crypto.randomUUID(),
+
+            ...timer.pendingCompletion,
+
+            taskTitle:
+                task?.title ||
+                "General study session",
+
+            resourceId,
+
+            reflection:
+                summary,
+
+            summaryAlignmentScore:
+                assessment.alignmentScore,
+
+            assessment: {
+                objectiveScore,
+
+                objectiveTotal:
+                    assessment.objectiveQuestions.length,
+
+                objectiveAnswers,
+
+                objectiveQuestions:
+                    assessment.objectiveQuestions
+            },
+
+            integrity:
+                timer.pendingCompletion.focusViolations ===
+                    0 &&
+                    timer.pendingCompletion.checksFailed ===
+                    0
+                    ? "verified"
+                    : "flagged"
         };
 
-    backdrop
-        .querySelector(
-            "#closeAssessmentResultsButton"
-        )
-        .addEventListener(
-            "click",
-            finish
+        state.sessions.push(
+            session
         );
 
-    backdrop.addEventListener(
-        "mousedown",
-        event => {
-            if (
-                event.target ===
-                backdrop
-            ) {
-                finish();
-            }
+        if (
+            task &&
+            task.status ===
+            "todo"
+        ) {
+            task.status =
+                "inProgress";
         }
-    );
-}
 
-function submitAssessment(
-    event
-) {
-    event.preventDefault();
+        saveState();
 
-    if (
-        !timer.pendingCompletion ||
-        !timer.pendingAssessment
-    ) {
-        return;
-    }
-
-    const {
-        assessment,
-        summary,
-        resourceId
-    } =
-        timer.pendingAssessment;
-
-    const objectiveAnswers =
-        assessment.objectiveQuestions.map(
-            (
-                _,
-                index
-            ) => {
-                const selected =
-                    els.assessmentForm.querySelector(
-                        `input[name="objective-${index}"]:checked`
-                    );
-
-                return selected
-                    ? Number(
-                        selected.value
-                    )
-                    : null;
-            }
+        closeModal(
+            els.assessmentModal
         );
 
-    if (
-        objectiveAnswers.some(
-            answer =>
-                answer ===
-                null
-        )
-    ) {
-        els.assessmentValidation.textContent =
-            `Answer all ${assessment.objectiveQuestions.length} questions before submitting.`;
+        timer.pendingCompletion =
+            null;
 
-        return;
-    }
+        timer.pendingAssessment =
+            null;
 
-    const objectiveScore =
-        objectiveAnswers.reduce(
-            (
-                score,
-                answer,
-                index
-            ) =>
-                score +
-                (
-                    answer ===
-                        assessment.objectiveQuestions[
-                            index
-                        ].correctAnswer
-                        ? 1
-                        : 0
-                ),
-            0
-        );
-
-    const task =
-        state.tasks.find(
-            item =>
-                item.id ===
-                timer.pendingCompletion.taskId
-        );
-
-    const session = {
-        id:
-            crypto.randomUUID(),
-
-        ...timer.pendingCompletion,
-
-        taskTitle:
-            task?.title ||
-            "General study session",
-
-        resourceId,
-
-        reflection:
-            summary,
-
-        summaryAlignmentScore:
-            assessment.alignmentScore,
-
-        assessment: {
+        openAssessmentResultsModal(
+            assessment,
+            objectiveAnswers,
             objectiveScore,
 
-            objectiveTotal:
-                assessment.objectiveQuestions.length,
+            () => {
+                const nextMode =
+                    timer.cycle >=
+                        state.settings.cyclesBeforeLongBreak
+                        ? "longBreak"
+                        : "shortBreak";
 
-            objectiveAnswers,
-
-            objectiveQuestions:
-                assessment.objectiveQuestions
-        },
-
-        integrity:
-            timer.pendingCompletion.focusViolations ===
-                0 &&
-                timer.pendingCompletion.checksFailed ===
-                0
-                ? "verified"
-                : "flagged"
-    };
-
-    state.sessions.push(
-        session
-    );
-
-    if (
-        task &&
-        task.status ===
-        "todo"
-    ) {
-        task.status =
-            "inProgress";
-    }
-
-    saveState();
-
-    closeModal(
-        els.assessmentModal
-    );
-
-    timer.pendingCompletion =
-        null;
-
-    timer.pendingAssessment =
-        null;
-
-    openAssessmentResultsModal(
-        assessment,
-        objectiveAnswers,
-        objectiveScore,
-
-        () => {
-            const nextMode =
-                timer.cycle >=
+                if (
+                    timer.cycle >=
                     state.settings.cyclesBeforeLongBreak
-                    ? "longBreak"
-                    : "shortBreak";
+                ) {
+                    timer.cycle =
+                        1;
 
-            if (
-                timer.cycle >=
-                state.settings.cyclesBeforeLongBreak
-            ) {
-                timer.cycle =
-                    1;
+                } else {
+                    timer.cycle +=
+                        1;
+                }
 
-            } else {
-                timer.cycle +=
-                    1;
+                setTimerMode(
+                    nextMode,
+                    true
+                );
+
+                els.sessionGoal.value =
+                    "";
+
+                els.goalCount.textContent =
+                    "0";
+
+                renderAll();
+
+                showToast(
+                    `Verified session logged. Grade: ${objectiveScore}/${assessment.objectiveQuestions.length}.`
+                );
             }
+        );
+    }
 
-            setTimerMode(
-                nextMode,
-                true
-            );
+    function backToReflection() {
+        closeModal(
+            els.assessmentModal
+        );
 
-            els.sessionGoal.value =
-                "";
+        openModal(
+            els.reflectionModal
+        );
 
-            els.goalCount.textContent =
-                "0";
+        timer.pendingAssessment =
+            null;
 
-            renderAll();
+        validateReflection();
+    }
 
-            showToast(
-                `Verified session logged. Grade: ${objectiveScore}/${assessment.objectiveQuestions.length}.`
-            );
+    function discardSession() {
+        if (
+            !window.confirm(
+                "Discard this completed session without logging it?"
+            )
+        ) {
+            return;
         }
-    );
-}
 
-function backToReflection() {
-    closeModal(
-        els.assessmentModal
-    );
+        timer.pendingCompletion =
+            null;
 
-    openModal(
-        els.reflectionModal
-    );
+        timer.pendingAssessment =
+            null;
 
-    timer.pendingAssessment =
-        null;
+        timer.backgroundPrep = null;
+        timer.acceptedReflection = null;
 
-    validateReflection();
-}
+        closeModal(
+            els.reflectionModal
+        );
 
-function discardSession() {
-    if (
-        !window.confirm(
-            "Discard this completed session without logging it?"
-        )
-    ) {
-        return;
-    }
+        const nextMode =
+            timer.cycle >=
+                state.settings.cyclesBeforeLongBreak
+                ? "longBreak"
+                : "shortBreak";
 
-    timer.pendingCompletion =
-        null;
-
-    timer.pendingAssessment =
-        null;
-
-    timer.backgroundPrep =
-        null;
-
-    closeModal(
-        els.reflectionModal
-    );
-
-    const nextMode =
-        timer.cycle >=
+        if (
+            timer.cycle >=
             state.settings.cyclesBeforeLongBreak
-            ? "longBreak"
-            : "shortBreak";
+        ) {
+            timer.cycle =
+                1;
 
-    if (
-        timer.cycle >=
-        state.settings.cyclesBeforeLongBreak
-    ) {
-        timer.cycle =
-            1;
+        } else {
+            timer.cycle +=
+                1;
+        }
 
-    } else {
-        timer.cycle +=
-            1;
+        setTimerMode(
+            nextMode,
+            true
+        );
+
+        showToast(
+            "Session discarded.",
+            "warning"
+        );
     }
 
-    setTimerMode(
-        nextMode,
-        true
-    );
+    // -------------------------------------------------------------
+    // PROGRESS
+    // -------------------------------------------------------------
 
-    showToast(
-        "Session discarded.",
-        "warning"
-    );
-}
+    function renderProgress() {
+        const totalMinutes =
+            state.sessions.reduce(
+                (
+                    sum,
+                    session
+                ) =>
+                    sum +
+                    session.durationMinutes,
+                0
+            );
 
-// -------------------------------------------------------------
-// PROGRESS
-// -------------------------------------------------------------
+        const streaks =
+            calculateStreaks();
 
-function renderProgress() {
-    const totalMinutes =
-        state.sessions.reduce(
+        const completed =
+            state.tasks.filter(
+                task =>
+                    task.status ===
+                    "done"
+            ).length;
+
+        const completionRate =
+            state.tasks.length
+                ? Math.round(
+                    (
+                        completed /
+                        state.tasks.length
+                    ) *
+                    100
+                )
+                : 0;
+
+        const weeklyMinutes =
+            getWeeklyMinutes();
+
+        const weeklyPercent =
+            Math.min(
+                100,
+
+                Math.round(
+                    (
+                        weeklyMinutes /
+                        state.settings.weeklyGoalMinutes
+                    ) *
+                    100
+                )
+            );
+
+        els.progressStreak.textContent =
+            streaks.current;
+
+        els.longestStreak.textContent =
+            streaks.longest;
+
+        els.progressTotalTime.textContent =
+            formatMinutes(
+                totalMinutes
+            );
+
+        els.completionRate.textContent =
+            `${completionRate}%`;
+
+        els.weeklyGoalPercent.textContent =
+            `${weeklyPercent}%`;
+
+        els.weeklyGoalCaption.textContent =
+            `${Math.round(
+                weeklyMinutes
+            )} of ${state.settings.weeklyGoalMinutes} minutes`;
+
+        els.goalRing.style.setProperty(
+            "--goal-progress",
+            `${weeklyPercent * 3.6}deg`
+        );
+
+        renderBarChart(
+            els.progressChart,
+            getLastSevenDays(),
+            true
+        );
+
+        renderHistory();
+    }
+
+    function renderHistory() {
+        const sessions = [
+            ...state.sessions
+        ].sort(
             (
-                sum,
-                session
+                a,
+                b
             ) =>
-                sum +
-                session.durationMinutes,
-            0
+                b.completedAt -
+                a.completedAt
         );
 
-    const streaks =
-        calculateStreaks();
-
-    const completed =
-        state.tasks.filter(
-            task =>
-                task.status ===
-                "done"
-        ).length;
-
-    const completionRate =
-        state.tasks.length
-            ? Math.round(
-                (
-                    completed /
-                    state.tasks.length
-                ) *
-                100
-            )
-            : 0;
-
-    const weeklyMinutes =
-        getWeeklyMinutes();
-
-    const weeklyPercent =
-        Math.min(
-            100,
-
-            Math.round(
-                (
-                    weeklyMinutes /
-                    state.settings.weeklyGoalMinutes
-                ) *
-                100
-            )
-        );
-
-    els.progressStreak.textContent =
-        streaks.current;
-
-    els.longestStreak.textContent =
-        streaks.longest;
-
-    els.progressTotalTime.textContent =
-        formatMinutes(
-            totalMinutes
-        );
-
-    els.completionRate.textContent =
-        `${completionRate}%`;
-
-    els.weeklyGoalPercent.textContent =
-        `${weeklyPercent}%`;
-
-    els.weeklyGoalCaption.textContent =
-        `${Math.round(
-            weeklyMinutes
-        )} of ${state.settings.weeklyGoalMinutes} minutes`;
-
-    els.goalRing.style.setProperty(
-        "--goal-progress",
-        `${weeklyPercent * 3.6}deg`
-    );
-
-    renderBarChart(
-        els.progressChart,
-        getLastSevenDays(),
-        true
-    );
-
-    renderHistory();
-}
-
-function renderHistory() {
-    const sessions = [
-        ...state.sessions
-    ].sort(
-        (
-            a,
-            b
-        ) =>
-            b.completedAt -
-            a.completedAt
-    );
-
-    els.historyBody.innerHTML =
-        sessions.length
-            ? sessions
-                .map(
-                    session => `
+        els.historyBody.innerHTML =
+            sessions.length
+                ? sessions
+                    .map(
+                        session => `
 <tr>
 <td>
 ${formatDate(
-                        session.completedAt
-                    )}
+                            session.completedAt
+                        )}
 </td>
 
 <td>
 ${escapeHtml(
-                        session.taskTitle ||
-                        "General study session"
-                    )}
+                            session.taskTitle ||
+                            "General study session"
+                        )}
 </td>
 
 <td>
@@ -7691,16 +7593,16 @@ ${session.durationMinutes} min
 <td>
 <span
 class="integrity-badge ${session.integrity ===
-                            "verified"
-                            ? "integrity-good"
-                            : "integrity-flagged"
-                        }"
+                                "verified"
+                                ? "integrity-good"
+                                : "integrity-flagged"
+                            }"
 >
 ${session.integrity ===
-                            "verified"
-                            ? "Verified"
-                            : "Flagged"
-                        }
+                                "verified"
+                                ? "Verified"
+                                : "Flagged"
+                            }
 </span>
 </td>
 
@@ -7713,7 +7615,7 @@ View
 </button>
 
 ${session.assessment
-                            ? `
+                                ? `
 <button
 class="text-button"
 data-view-results="${session.id}"
@@ -7721,14 +7623,14 @@ data-view-results="${session.id}"
 Results
 </button>
 `
-                            : ""
-                        }
+                                : ""
+                            }
 </td>
 </tr>
 `
-                )
-                .join("")
-            : `
+                    )
+                    .join("")
+                : `
 <tr>
 <td colspan="5">
 <div class="empty-state">
@@ -7737,666 +7639,552 @@ No completed sessions yet.
 </td>
 </tr>
 `;
-}
-
-function viewReflection(
-    id
-) {
-    const session =
-        state.sessions.find(
-            item =>
-                item.id ===
-                id
-        );
-
-    if (!session) {
-        return;
     }
 
-    els.reflectionViewTitle.textContent =
-        session.taskTitle ||
-        "Session reflection";
-
-    els.reflectionViewText.textContent =
-        session.reflection;
-
-    openModal(
-        els.reflectionViewModal
-    );
-}
-
-function viewSessionResults(
-    id
-) {
-    const session =
-        state.sessions.find(
-            item =>
-                item.id ===
-                id
-        );
-
-    if (
-        !session ||
-        !session.assessment
+    function viewReflection(
+        id
     ) {
-        return;
-    }
-
-    const assessment = {
-        objectiveQuestions:
-            session.assessment.objectiveQuestions
-    };
-
-    openAssessmentResultsModal(
-        assessment,
-
-        session.assessment.objectiveAnswers,
-
-        session.assessment.objectiveScore,
-
-        () => { }
-    );
-}// -------------------------------------------------------------
-// SETTINGS
-// -------------------------------------------------------------
-
-function populateSettings() {
-    els.focusMinutesSetting.value =
-        state.settings.focusMinutes;
-
-    els.shortBreakSetting.value =
-        state.settings.shortBreakMinutes;
-
-    els.longBreakSetting.value =
-        state.settings.longBreakMinutes;
-
-    els.cyclesSetting.value =
-        state.settings.cyclesBeforeLongBreak;
-
-    els.weeklyGoalSetting.value =
-        state.settings.weeklyGoalMinutes;
-
-    state.settings.focusTracking =
-        true;
-
-    state.settings.verificationChecks =
-        true;
-
-    state.settings.sound =
-        true;
-
-    els.focusTrackingSetting.checked =
-        true;
-
-    els.verificationSetting.checked =
-        true;
-
-    els.soundSetting.checked =
-        true;
-}
-
-function saveSettings() {
-    const next = {
-        focusMinutes:
-            Number(
-                els.focusMinutesSetting.value
-            ),
-
-        shortBreakMinutes:
-            Number(
-                els.shortBreakSetting.value
-            ),
-
-        longBreakMinutes:
-            Number(
-                els.longBreakSetting.value
-            ),
-
-        cyclesBeforeLongBreak:
-            Number(
-                els.cyclesSetting.value
-            ),
-
-        weeklyGoalMinutes:
-            Number(
-                els.weeklyGoalSetting.value
-            ),
-
-        focusTracking:
-            true,
-
-        verificationChecks:
-            true,
-
-        sound:
-            true,
-
-        theme:
-            state.settings.theme
-    };
-
-    const valid =
-        next.focusMinutes >=
-        1 &&
-        next.focusMinutes <=
-        180 &&
-
-        next.shortBreakMinutes >=
-        1 &&
-        next.shortBreakMinutes <=
-        60 &&
-
-        next.longBreakMinutes >=
-        1 &&
-        next.longBreakMinutes <=
-        90 &&
-
-        next.cyclesBeforeLongBreak >=
-        1 &&
-        next.cyclesBeforeLongBreak <=
-        10 &&
-
-        next.weeklyGoalMinutes >=
-        30 &&
-        next.weeklyGoalMinutes <=
-        10080;
-
-    if (!valid) {
-        showToast(
-            "Please check the timer and weekly goal values.",
-            "error"
-        );
-
-        return;
-    }
-
-    state.settings =
-        next;
-
-    saveState();
-
-    if (!timer.running) {
-        setTimerMode(
-            timer.mode,
-            true
-        );
-    }
-
-    renderAll();
-
-    showToast(
-        "Settings saved."
-    );
-}
-
-async function resetAllData() {
-    if (
-        !window.confirm(
-            "Reset every task, session, and setting stored for this user?"
-        )
-    ) {
-        return;
-    }
-
-    if (
-        !window.confirm(
-            "This cannot be undone. Continue?"
-        )
-    ) {
-        return;
-    }
-
-    if (currentUser) {
-        localStorage.removeItem(
-            getStorageKey(
-                currentUser.id
-            )
-        );
-    }
-
-    state =
-        structuredClone(
-            defaultState
-        );
-
-    if (currentUser) {
-        try {
-            const {
-                error
-            } =
-                await supabase
-                    .from(
-                        STATE_TABLE
-                    )
-                    .upsert(
-                        {
-                            user_id:
-                                currentUser.id,
-
-                            data:
-                                state,
-
-                            updated_at:
-                                new Date().toISOString()
-                        },
-
-                        {
-                            onConflict:
-                                "user_id"
-                        }
-                    );
-
-            if (error) {
-                throw error;
-            }
-
-        } catch (error) {
-            console.error(
-                "Could not reset cloud state.",
-                error
+        const session =
+            state.sessions.find(
+                item =>
+                    item.id ===
+                    id
             );
 
+        if (!session) {
+            return;
+        }
+
+        els.reflectionViewTitle.textContent =
+            session.taskTitle ||
+            "Session reflection";
+
+        els.reflectionViewText.textContent =
+            session.reflection;
+
+        openModal(
+            els.reflectionViewModal
+        );
+    }
+
+    function viewSessionResults(
+        id
+    ) {
+        const session =
+            state.sessions.find(
+                item =>
+                    item.id ===
+                    id
+            );
+
+        if (
+            !session ||
+            !session.assessment
+        ) {
+            return;
+        }
+
+        const assessment = {
+            objectiveQuestions:
+                session.assessment.objectiveQuestions
+        };
+
+        openAssessmentResultsModal(
+            assessment,
+
+            session.assessment.objectiveAnswers,
+
+            session.assessment.objectiveScore,
+
+            () => { }
+        );
+    }// -------------------------------------------------------------
+    // SETTINGS
+    // -------------------------------------------------------------
+
+    function populateSettings() {
+        els.focusMinutesSetting.value =
+            state.settings.focusMinutes;
+
+        els.shortBreakSetting.value =
+            state.settings.shortBreakMinutes;
+
+        els.longBreakSetting.value =
+            state.settings.longBreakMinutes;
+
+        els.cyclesSetting.value =
+            state.settings.cyclesBeforeLongBreak;
+
+        els.weeklyGoalSetting.value =
+            state.settings.weeklyGoalMinutes;
+
+        state.settings.focusTracking =
+            true;
+
+        state.settings.verificationChecks =
+            true;
+
+        state.settings.sound =
+            true;
+
+        els.focusTrackingSetting.checked =
+            true;
+
+        els.verificationSetting.checked =
+            true;
+
+        els.soundSetting.checked =
+            true;
+    }
+
+    function saveSettings() {
+        const next = {
+            focusMinutes:
+                Number(
+                    els.focusMinutesSetting.value
+                ),
+
+            shortBreakMinutes:
+                Number(
+                    els.shortBreakSetting.value
+                ),
+
+            longBreakMinutes:
+                Number(
+                    els.longBreakSetting.value
+                ),
+
+            cyclesBeforeLongBreak:
+                Number(
+                    els.cyclesSetting.value
+                ),
+
+            weeklyGoalMinutes:
+                Number(
+                    els.weeklyGoalSetting.value
+                ),
+
+            focusTracking:
+                true,
+
+            verificationChecks:
+                true,
+
+            sound:
+                true,
+
+            theme:
+                state.settings.theme
+        };
+
+        const valid =
+            next.focusMinutes >=
+            1 &&
+            next.focusMinutes <=
+            180 &&
+
+            next.shortBreakMinutes >=
+            1 &&
+            next.shortBreakMinutes <=
+            60 &&
+
+            next.longBreakMinutes >=
+            1 &&
+            next.longBreakMinutes <=
+            90 &&
+
+            next.cyclesBeforeLongBreak >=
+            1 &&
+            next.cyclesBeforeLongBreak <=
+            10 &&
+
+            next.weeklyGoalMinutes >=
+            30 &&
+            next.weeklyGoalMinutes <=
+            10080;
+
+        if (!valid) {
             showToast(
-                "Local data was reset, but the cloud copy could not be cleared. Try again when you're back online.",
+                "Please check the timer and weekly goal values.",
                 "error"
             );
-        }
-    }
 
-    timer.cycle =
-        1;
-
-    setTimerMode(
-        "focus",
-        true
-    );
-
-    populateSettings();
-    applyTheme();
-    renderAll();
-
-    navigate(
-        "dashboard"
-    );
-
-    showToast(
-        "All user app data has been reset.",
-        "warning"
-    );
-}
-
-// -------------------------------------------------------------
-// BACKBLAZE B2
-// -------------------------------------------------------------
-
-function sanitiseFileName(
-    name = "file"
-) {
-    const cleaned =
-        name.replace(
-            /[^a-zA-Z0-9._-]/g,
-            "_"
-        );
-
-    return (
-        cleaned.slice(
-            -140
-        ) ||
-        "file"
-    );
-}
-
-function resourceStoragePath(
-    userId,
-    id,
-    fileName
-) {
-    return `${userId}/${id}-${sanitiseFileName(
-        fileName
-    )}`;
-}
-
-const MAX_FILE_SIZE_BYTES =
-    50 *
-    1024 *
-    1024;
-
-async function b2Presign(
-    action,
-    payload
-) {
-    const {
-        data,
-        error
-    } =
-        await supabase.functions.invoke(
-            "b2-presign",
-            {
-                body: {
-                    action,
-                    ...payload
-                }
-            }
-        );
-
-    if (error) {
-        let detail =
-            "";
-
-        try {
-            const context =
-                error.context;
-
-            if (
-                context &&
-                typeof context.json ===
-                "function"
-            ) {
-                const body =
-                    await context.json();
-
-                detail =
-                    body?.error ||
-                    "";
-            }
-
-        } catch (_) {
+            return;
         }
 
-        throw new Error(
-            detail ||
-            error.message ||
-            "Could not reach file storage."
-        );
-    }
+        state.settings =
+            next;
 
-    if (
-        data &&
-        data.error
-    ) {
-        throw new Error(
-            data.error
-        );
-    }
+        saveState();
 
-    return data;
-}
-
-async function uploadResourceFile(
-    id,
-    file,
-    onProgress
-) {
-    if (!currentUser) {
-        throw new Error(
-            "You must be signed in to upload a resource."
-        );
-    }
-
-    const {
-        url
-    } =
-        await b2Presign(
-            "upload",
-            {
-                resourceId:
-                    id,
-
-                fileName:
-                    file.name
-            }
-        );
-
-    await new Promise(
-        (
-            resolve,
-            reject
-        ) => {
-            const xhr =
-                new XMLHttpRequest();
-
-            xhr.open(
-                "PUT",
-                url,
+        if (!timer.running) {
+            setTimerMode(
+                timer.mode,
                 true
             );
-
-            xhr.setRequestHeader(
-                "Content-Type",
-                file.type ||
-                "application/octet-stream"
-            );
-
-            if (
-                xhr.upload &&
-                typeof onProgress ===
-                "function"
-            ) {
-                xhr.upload.addEventListener(
-                    "progress",
-                    event => {
-                        if (
-                            event.lengthComputable
-                        ) {
-                            onProgress(
-                                Math.round(
-                                    (
-                                        event.loaded /
-                                        event.total
-                                    ) *
-                                    100
-                                )
-                            );
-                        }
-                    }
-                );
-            }
-
-            xhr.onload =
-                () => {
-                    if (
-                        xhr.status >=
-                        200 &&
-                        xhr.status <
-                        300
-                    ) {
-                        resolve();
-
-                    } else {
-                        reject(
-                            new Error(
-                                `Upload failed (status ${xhr.status}). Check your connection and try again.`
-                            )
-                        );
-                    }
-                };
-
-            xhr.onerror =
-                () =>
-                    reject(
-                        new Error(
-                            "Upload failed. Check your connection and try again."
-                        )
-                    );
-
-            xhr.send(
-                file
-            );
         }
-    );
 
-    const path =
-        resourceStoragePath(
-            currentUser.id,
-            id,
-            file.name
+        renderAll();
+
+        showToast(
+            "Settings saved."
         );
-
-    return {
-        storagePath:
-            path,
-
-        storageProvider:
-            "b2"
-    };
-}
-
-async function getResourceFileBlob(
-    resource
-) {
-    if (
-        !resource?.storagePath
-    ) {
-        return null;
     }
 
-    try {
+    async function resetAllData() {
         if (
-            resource.storageProvider ===
-            "b2"
+            !window.confirm(
+                "Reset every task, session, and setting stored for this user?"
+            )
         ) {
-            const {
-                url
-            } =
-                await b2Presign(
-                    "download",
-                    {
-                        path:
-                            resource.storagePath
-                    }
-                );
-
-            const response =
-                await fetch(
-                    url
-                );
-
-            if (!response.ok) {
-                throw new Error(
-                    `Download failed (status ${response.status}).`
-                );
-            }
-
-            return await response.blob();
+            return;
         }
 
+        if (
+            !window.confirm(
+                "This cannot be undone. Continue?"
+            )
+        ) {
+            return;
+        }
+
+        if (currentUser) {
+            localStorage.removeItem(
+                getStorageKey(
+                    currentUser.id
+                )
+            );
+        }
+
+        state =
+            structuredClone(
+                defaultState
+            );
+
+        if (currentUser) {
+            try {
+                const {
+                    error
+                } =
+                    await supabase
+                        .from(
+                            STATE_TABLE
+                        )
+                        .upsert(
+                            {
+                                user_id:
+                                    currentUser.id,
+
+                                data:
+                                    state,
+
+                                updated_at:
+                                    new Date().toISOString()
+                            },
+
+                            {
+                                onConflict:
+                                    "user_id"
+                            }
+                        );
+
+                if (error) {
+                    throw error;
+                }
+
+            } catch (error) {
+                console.error(
+                    "Could not reset cloud state.",
+                    error
+                );
+
+                showToast(
+                    "Local data was reset, but the cloud copy could not be cleared. Try again when you're back online.",
+                    "error"
+                );
+            }
+        }
+
+        timer.cycle =
+            1;
+
+        setTimerMode(
+            "focus",
+            true
+        );
+
+        populateSettings();
+        applyTheme();
+        renderAll();
+
+        navigate(
+            "dashboard"
+        );
+
+        showToast(
+            "All user app data has been reset.",
+            "warning"
+        );
+    }
+
+    // -------------------------------------------------------------
+    // BACKBLAZE B2
+    // -------------------------------------------------------------
+
+    function sanitiseFileName(
+        name = "file"
+    ) {
+        const cleaned =
+            name.replace(
+                /[^a-zA-Z0-9._-]/g,
+                "_"
+            );
+
+        return (
+            cleaned.slice(
+                -140
+            ) ||
+            "file"
+        );
+    }
+
+    function resourceStoragePath(
+        userId,
+        id,
+        fileName
+    ) {
+        return `${userId}/${id}-${sanitiseFileName(
+            fileName
+        )}`;
+    }
+
+    const MAX_FILE_SIZE_BYTES =
+        50 *
+        1024 *
+        1024;
+
+    async function b2Presign(
+        action,
+        payload
+    ) {
         const {
             data,
             error
         } =
-            await supabase.storage
-                .from(
-                    RESOURCE_BUCKET
-                )
-                .download(
-                    resource.storagePath
-                );
-
-        if (error) {
-            throw error;
-        }
-
-        return data;
-
-    } catch (error) {
-        console.warn(
-            "Could not download resource file from cloud storage.",
-            error
-        );
-
-        return null;
-    }
-}
-
-async function removeResourceFile(
-    resource
-) {
-    if (
-        !resource?.storagePath
-    ) {
-        return;
-    }
-
-    try {
-        if (
-            resource.storageProvider ===
-            "b2"
-        ) {
-            await b2Presign(
-                "delete",
+            await supabase.functions.invoke(
+                "b2-presign",
                 {
-                    path:
-                        resource.storagePath
+                    body: {
+                        action,
+                        ...payload
+                    }
                 }
             );
 
-        } else {
-            const {
-                error
-            } =
-                await supabase.storage
-                    .from(
-                        RESOURCE_BUCKET
-                    )
-                    .remove([
-                        resource.storagePath
-                    ]);
+        if (error) {
+            let detail =
+                "";
 
-            if (error) {
-                throw error;
+            try {
+                const context =
+                    error.context;
+
+                if (
+                    context &&
+                    typeof context.json ===
+                    "function"
+                ) {
+                    const body =
+                        await context.json();
+
+                    detail =
+                        body?.error ||
+                        "";
+                }
+
+            } catch (_) {
             }
+
+            throw new Error(
+                detail ||
+                error.message ||
+                "Could not reach file storage."
+            );
         }
 
-    } catch (error) {
-        console.warn(
-            "Could not remove resource file from cloud storage.",
-            error
+        if (
+            data &&
+            data.error
+        ) {
+            throw new Error(
+                data.error
+            );
+        }
+
+        return data;
+    }
+
+    async function uploadResourceFile(
+        id,
+        file,
+        onProgress
+    ) {
+        if (!currentUser) {
+            throw new Error(
+                "You must be signed in to upload a resource."
+            );
+        }
+
+        const {
+            url
+        } =
+            await b2Presign(
+                "upload",
+                {
+                    resourceId:
+                        id,
+
+                    fileName:
+                        file.name
+                }
+            );
+
+        await new Promise(
+            (
+                resolve,
+                reject
+            ) => {
+                const xhr =
+                    new XMLHttpRequest();
+
+                xhr.open(
+                    "PUT",
+                    url,
+                    true
+                );
+
+                xhr.setRequestHeader(
+                    "Content-Type",
+                    file.type ||
+                    "application/octet-stream"
+                );
+
+                if (
+                    xhr.upload &&
+                    typeof onProgress ===
+                    "function"
+                ) {
+                    xhr.upload.addEventListener(
+                        "progress",
+                        event => {
+                            if (
+                                event.lengthComputable
+                            ) {
+                                onProgress(
+                                    Math.round(
+                                        (
+                                            event.loaded /
+                                            event.total
+                                        ) *
+                                        100
+                                    )
+                                );
+                            }
+                        }
+                    );
+                }
+
+                xhr.onload =
+                    () => {
+                        if (
+                            xhr.status >=
+                            200 &&
+                            xhr.status <
+                            300
+                        ) {
+                            resolve();
+
+                        } else {
+                            reject(
+                                new Error(
+                                    `Upload failed (status ${xhr.status}). Check your connection and try again.`
+                                )
+                            );
+                        }
+                    };
+
+                xhr.onerror =
+                    () =>
+                        reject(
+                            new Error(
+                                "Upload failed. Check your connection and try again."
+                            )
+                        );
+
+                xhr.send(
+                    file
+                );
+            }
         );
-    }
-}
 
-async function migrateResourcesToB2() {
-    if (!currentUser) {
-        return;
-    }
+        const path =
+            resourceStoragePath(
+                currentUser.id,
+                id,
+                file.name
+            );
 
-    const legacyResources =
-        state.resources.filter(
-            r =>
-                r.storagePath &&
-                r.storageProvider !==
+        return {
+            storagePath:
+                path,
+
+            storageProvider:
                 "b2"
-        );
-
-    if (
-        !legacyResources.length
-    ) {
-        showToast(
-            "No resources need migrating — everything is already on Backblaze B2."
-        );
-
-        return;
+        };
     }
 
-    if (
-        !window.confirm(
-            `Migrate ${legacyResources.length} file(s) from Supabase Storage to Backblaze B2? This may take a while depending on file sizes.`
-        )
+    async function getResourceFileBlob(
+        resource
     ) {
-        return;
-    }
+        if (
+            !resource?.storagePath
+        ) {
+            return null;
+        }
 
-    let migrated = 0;
-    let failed = 0;
-
-    for (
-        const resource of
-        legacyResources
-    ) {
         try {
+            if (
+                resource.storageProvider ===
+                "b2"
+            ) {
+                const {
+                    url
+                } =
+                    await b2Presign(
+                        "download",
+                        {
+                            path:
+                                resource.storagePath
+                        }
+                    );
+
+                const response =
+                    await fetch(
+                        url
+                    );
+
+                if (!response.ok) {
+                    throw new Error(
+                        `Download failed (status ${response.status}).`
+                    );
+                }
+
+                return await response.blob();
+            }
+
             const {
-                data: file,
-                error: downloadError
+                data,
+                error
             } =
                 await supabase.storage
                     .from(
@@ -8406,611 +8194,725 @@ async function migrateResourcesToB2() {
                         resource.storagePath
                     );
 
-            if (
-                downloadError ||
-                !file
-            ) {
-                throw (
-                    downloadError ||
-                    new Error(
-                        "Empty file"
-                    )
-                );
+            if (error) {
+                throw error;
             }
 
-            const fileForUpload =
-                new File(
-                    [
-                        file
-                    ],
-
-                    resource.fileName ||
-                    "file",
-
-                    {
-                        type:
-                            resource.mimeType ||
-                            file.type ||
-                            "application/octet-stream"
-                    }
-                );
-
-            const {
-                storagePath,
-                storageProvider
-            } =
-                await uploadResourceFile(
-                    resource.id,
-                    fileForUpload
-                );
-
-            await supabase.storage
-                .from(
-                    RESOURCE_BUCKET
-                )
-                .remove([
-                    resource.storagePath
-                ]);
-
-            resource.storagePath =
-                storagePath;
-
-            resource.storageProvider =
-                storageProvider;
-
-            migrated += 1;
+            return data;
 
         } catch (error) {
-            console.error(
-                `Could not migrate resource "${resource.title}".`,
+            console.warn(
+                "Could not download resource file from cloud storage.",
                 error
             );
 
-            failed += 1;
+            return null;
         }
     }
 
-    saveState();
-    renderAll();
+    async function removeResourceFile(
+        resource
+    ) {
+        if (
+            !resource?.storagePath
+        ) {
+            return;
+        }
 
-    if (failed) {
-        showToast(
-            `Migrated ${migrated} file(s) to B2. ${failed} failed and remain on Supabase Storage — try again later.`,
-            "warning"
+        try {
+            if (
+                resource.storageProvider ===
+                "b2"
+            ) {
+                await b2Presign(
+                    "delete",
+                    {
+                        path:
+                            resource.storagePath
+                    }
+                );
+
+            } else {
+                const {
+                    error
+                } =
+                    await supabase.storage
+                        .from(
+                            RESOURCE_BUCKET
+                        )
+                        .remove([
+                            resource.storagePath
+                        ]);
+
+                if (error) {
+                    throw error;
+                }
+            }
+
+        } catch (error) {
+            console.warn(
+                "Could not remove resource file from cloud storage.",
+                error
+            );
+        }
+    }
+
+    async function migrateResourcesToB2() {
+        if (!currentUser) {
+            return;
+        }
+
+        const legacyResources =
+            state.resources.filter(
+                r =>
+                    r.storagePath &&
+                    r.storageProvider !==
+                    "b2"
+            );
+
+        if (
+            !legacyResources.length
+        ) {
+            showToast(
+                "No resources need migrating — everything is already on Backblaze B2."
+            );
+
+            return;
+        }
+
+        if (
+            !window.confirm(
+                `Migrate ${legacyResources.length} file(s) from Supabase Storage to Backblaze B2? This may take a while depending on file sizes.`
+            )
+        ) {
+            return;
+        }
+
+        let migrated = 0;
+        let failed = 0;
+
+        for (
+            const resource of
+            legacyResources
+        ) {
+            try {
+                const {
+                    data: file,
+                    error: downloadError
+                } =
+                    await supabase.storage
+                        .from(
+                            RESOURCE_BUCKET
+                        )
+                        .download(
+                            resource.storagePath
+                        );
+
+                if (
+                    downloadError ||
+                    !file
+                ) {
+                    throw (
+                        downloadError ||
+                        new Error(
+                            "Empty file"
+                        )
+                    );
+                }
+
+                const fileForUpload =
+                    new File(
+                        [
+                            file
+                        ],
+
+                        resource.fileName ||
+                        "file",
+
+                        {
+                            type:
+                                resource.mimeType ||
+                                file.type ||
+                                "application/octet-stream"
+                        }
+                    );
+
+                const {
+                    storagePath,
+                    storageProvider
+                } =
+                    await uploadResourceFile(
+                        resource.id,
+                        fileForUpload
+                    );
+
+                await supabase.storage
+                    .from(
+                        RESOURCE_BUCKET
+                    )
+                    .remove([
+                        resource.storagePath
+                    ]);
+
+                resource.storagePath =
+                    storagePath;
+
+                resource.storageProvider =
+                    storageProvider;
+
+                migrated += 1;
+
+            } catch (error) {
+                console.error(
+                    `Could not migrate resource "${resource.title}".`,
+                    error
+                );
+
+                failed += 1;
+            }
+        }
+
+        saveState();
+        renderAll();
+
+        if (failed) {
+            showToast(
+                `Migrated ${migrated} file(s) to B2. ${failed} failed and remain on Supabase Storage — try again later.`,
+                "warning"
+            );
+
+        } else {
+            showToast(
+                `All ${migrated} file(s) migrated to Backblaze B2.`
+            );
+        }
+    }
+
+    function getResource(id) {
+        return state.resources.find(
+            item =>
+                item.id ===
+                id
+        );
+    }
+
+    function toggleResourceFields() {
+        const isLink =
+            els.resourceKind.value ===
+            "link";
+
+        els.resourceFileGroup.classList.toggle(
+            "hidden",
+            isLink
         );
 
-    } else {
-        showToast(
-            `All ${migrated} file(s) migrated to Backblaze B2.`
+        els.resourceUrlGroup.classList.toggle(
+            "hidden",
+            !isLink
         );
     }
-}
 
-function getResource(id) {
-    return state.resources.find(
-        item =>
-            item.id ===
-            id
-    );
-}
-
-function toggleResourceFields() {
-    const isLink =
-        els.resourceKind.value ===
-        "link";
-
-    els.resourceFileGroup.classList.toggle(
-        "hidden",
-        isLink
-    );
-
-    els.resourceUrlGroup.classList.toggle(
-        "hidden",
-        !isLink
-    );
-}
-
-function fileKindLabel(
-    file
-) {
-    const type =
-        file.type ||
-        "";
-
-    if (
-        type.startsWith(
-            "video/"
-        )
+    function fileKindLabel(
+        file
     ) {
-        return {
-            icon:
-                "🎬",
+        const type =
+            file.type ||
+            "";
 
-            label:
-                "Video selected"
-        };
-    }
+        if (
+            type.startsWith(
+                "video/"
+            )
+        ) {
+            return {
+                icon:
+                    "🎬",
 
-    if (
-        type.startsWith(
-            "audio/"
-        )
-    ) {
-        return {
-            icon:
-                "🎧",
+                label:
+                    "Video selected"
+            };
+        }
 
-            label:
-                "Audio selected"
-        };
-    }
+        if (
+            type.startsWith(
+                "audio/"
+            )
+        ) {
+            return {
+                icon:
+                    "🎧",
 
-    if (
-        type.startsWith(
-            "image/"
-        )
-    ) {
-        return {
-            icon:
-                "🖼️",
+                label:
+                    "Audio selected"
+            };
+        }
 
-            label:
-                "Image selected"
-        };
-    }
+        if (
+            type.startsWith(
+                "image/"
+            )
+        ) {
+            return {
+                icon:
+                    "🖼️",
 
-    if (
-        type ===
-        "application/pdf"
-    ) {
+                label:
+                    "Image selected"
+            };
+        }
+
+        if (
+            type ===
+            "application/pdf"
+        ) {
+            return {
+                icon:
+                    "📄",
+
+                label:
+                    "PDF selected"
+            };
+        }
+
+        if (
+            type ===
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
+            /\.docx$/i.test(
+                file.name ||
+                ""
+            )
+        ) {
+            return {
+                icon:
+                    "📝",
+
+                label:
+                    "Word document selected"
+            };
+        }
+
         return {
             icon:
                 "📄",
 
             label:
-                "PDF selected"
+                "File selected"
         };
     }
 
-    if (
-        type ===
-        "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
-        /\.docx$/i.test(
-            file.name ||
-            ""
-        )
-    ) {
-        return {
-            icon:
-                "📝",
+    function updateFileDropDisplay() {
+        if (
+            !els.resourceFileDrop
+        ) {
+            return;
+        }
 
-            label:
-                "Word document selected"
-        };
-    }
+        const file =
+            els.resourceFile.files[0];
 
-    return {
-        icon:
-            "📄",
+        if (!file) {
+            els.resourceFileDrop.classList.remove(
+                "has-file"
+            );
 
-        label:
-            "File selected"
-    };
-}
+            els.resourceFileIcon.textContent =
+                "📎";
 
-function updateFileDropDisplay() {
-    if (
-        !els.resourceFileDrop
-    ) {
-        return;
-    }
+            els.resourceFileLabel.textContent =
+                "Choose a document or video";
 
-    const file =
-        els.resourceFile.files[0];
+            els.resourceFileName.textContent =
+                "No file chosen";
 
-    if (!file) {
-        els.resourceFileDrop.classList.remove(
+            return;
+        }
+
+        const {
+            icon,
+            label
+        } =
+            fileKindLabel(
+                file
+            );
+
+        els.resourceFileDrop.classList.add(
             "has-file"
         );
 
         els.resourceFileIcon.textContent =
-            "📎";
+            icon;
 
         els.resourceFileLabel.textContent =
-            "Choose a document or video";
+            label;
 
         els.resourceFileName.textContent =
-            "No file chosen";
-
-        return;
+            `${file.name} · ${humanFileSize(
+                file.size
+            )}`;
     }
 
-    const {
-        icon,
-        label
-    } =
-        fileKindLabel(
-            file
-        );
+    function clearFileDrop() {
+        els.resourceFile.value =
+            "";
 
-    els.resourceFileDrop.classList.add(
-        "has-file"
-    );
-
-    els.resourceFileIcon.textContent =
-        icon;
-
-    els.resourceFileLabel.textContent =
-        label;
-
-    els.resourceFileName.textContent =
-        `${file.name} · ${humanFileSize(
-            file.size
-        )}`;
-}
-
-function clearFileDrop() {
-    els.resourceFile.value =
-        "";
-
-    updateFileDropDisplay();
-}
-
-function bindFileDropEvents() {
-    if (
-        !els.resourceFileDrop
-    ) {
-        return;
+        updateFileDropDisplay();
     }
 
-    els.resourceFile.addEventListener(
-        "change",
-        updateFileDropDisplay
-    );
-
-    els.resourceFileClear.addEventListener(
-        "click",
-        event => {
-            event.preventDefault();
-            event.stopPropagation();
-
-            clearFileDrop();
-        }
-    );
-}
-
-async function saveResource(
-    event
-) {
-    event.preventDefault();
-
-    const kind =
-        els.resourceKind.value;
-
-    const file =
-        els.resourceFile.files[0];
-
-    const url =
-        els.resourceUrl.value.trim();
-
-    if (
-        kind ===
-        "file" &&
-        !file
-    ) {
-        showToast(
-            "Choose a document or video to upload.",
-            "error"
-        );
-
-        return;
-    }
-
-    if (
-        kind ===
-        "link" &&
-        !url
-    ) {
-        showToast(
-            "Enter a valid resource URL.",
-            "error"
-        );
-
-        return;
-    }
-
-    const id =
-        crypto.randomUUID();
-
-    let type =
-        "link";
-
-    let mimeType =
-        "";
-
-    let fileName =
-        "";
-
-    let fileSize =
-        0;
-
-    let storagePath =
-        "";
-
-    let storageProvider =
-        "";
-
-    if (file) {
+    function bindFileDropEvents() {
         if (
-            file.size >
-            MAX_FILE_SIZE_BYTES
+            !els.resourceFileDrop
+        ) {
+            return;
+        }
+
+        els.resourceFile.addEventListener(
+            "change",
+            updateFileDropDisplay
+        );
+
+        els.resourceFileClear.addEventListener(
+            "click",
+            event => {
+                event.preventDefault();
+                event.stopPropagation();
+
+                clearFileDrop();
+            }
+        );
+    }
+
+    async function saveResource(
+        event
+    ) {
+        event.preventDefault();
+
+        const kind =
+            els.resourceKind.value;
+
+        const file =
+            els.resourceFile.files[0];
+
+        const url =
+            els.resourceUrl.value.trim();
+
+        if (
+            kind ===
+            "file" &&
+            !file
         ) {
             showToast(
-                `"${file.name}" is ${humanFileSize(
-                    file.size
-                )} — the study library's free-tier limit is 50 MB per file. Try a shorter/compressed video, or use a YouTube link instead.`,
+                "Choose a document or video to upload.",
                 "error"
             );
 
             return;
         }
 
-        mimeType =
-            file.type ||
-            "application/octet-stream";
+        if (
+            kind ===
+            "link" &&
+            !url
+        ) {
+            showToast(
+                "Enter a valid resource URL.",
+                "error"
+            );
 
-        fileName =
-            file.name;
-
-        fileSize =
-            file.size;
-
-        type =
-            mimeType.startsWith(
-                "video/"
-            ) ||
-                mimeType.startsWith(
-                    "audio/"
-                )
-                ? "video"
-                : "document";
-
-        const submitButton =
-            els.resourceSubmitButton;
-
-        const originalLabel =
-            submitButton
-                ? submitButton.textContent
-                : "";
-
-        if (submitButton) {
-            submitButton.disabled =
-                true;
+            return;
         }
 
-        try {
-            const uploadResult =
-                await uploadResourceFile(
-                    id,
-                    file,
+        const id =
+            crypto.randomUUID();
 
-                    percent => {
-                        if (submitButton) {
-                            submitButton.textContent =
-                                `Uploading… ${percent}%`;
-                        }
-                    }
+        let type =
+            "link";
+
+        let mimeType =
+            "";
+
+        let fileName =
+            "";
+
+        let fileSize =
+            0;
+
+        let storagePath =
+            "";
+
+        let storageProvider =
+            "";
+
+        if (file) {
+            if (
+                file.size >
+                MAX_FILE_SIZE_BYTES
+            ) {
+                showToast(
+                    `"${file.name}" is ${humanFileSize(
+                        file.size
+                    )} — the study library's free-tier limit is 50 MB per file. Try a shorter/compressed video, or use a YouTube link instead.`,
+                    "error"
                 );
 
-            storagePath =
-                uploadResult.storagePath;
+                return;
+            }
 
-            storageProvider =
-                uploadResult.storageProvider;
+            mimeType =
+                file.type ||
+                "application/octet-stream";
 
-        } catch (error) {
-            console.error(
-                error
-            );
+            fileName =
+                file.name;
 
-            showToast(
-                "This file could not be uploaded to your cloud library. Check your connection and try again.",
-                "error"
-            );
+            fileSize =
+                file.size;
 
-            return;
+            type =
+                mimeType.startsWith(
+                    "video/"
+                ) ||
+                    mimeType.startsWith(
+                        "audio/"
+                    )
+                    ? "video"
+                    : "document";
 
-        } finally {
+            const submitButton =
+                els.resourceSubmitButton;
+
+            const originalLabel =
+                submitButton
+                    ? submitButton.textContent
+                    : "";
+
             if (submitButton) {
                 submitButton.disabled =
-                    false;
+                    true;
+            }
 
-                submitButton.textContent =
-                    originalLabel;
+            try {
+                const uploadResult =
+                    await uploadResourceFile(
+                        id,
+                        file,
+
+                        percent => {
+                            if (submitButton) {
+                                submitButton.textContent =
+                                    `Uploading… ${percent}%`;
+                            }
+                        }
+                    );
+
+                storagePath =
+                    uploadResult.storagePath;
+
+                storageProvider =
+                    uploadResult.storageProvider;
+
+            } catch (error) {
+                console.error(
+                    error
+                );
+
+                showToast(
+                    "This file could not be uploaded to your cloud library. Check your connection and try again.",
+                    "error"
+                );
+
+                return;
+
+            } finally {
+                if (submitButton) {
+                    submitButton.disabled =
+                        false;
+
+                    submitButton.textContent =
+                        originalLabel;
+                }
             }
         }
-    }
 
-    state.resources.unshift({
-        id,
+        state.resources.unshift({
+            id,
 
-        title:
-            els.resourceTitle.value.trim(),
+            title:
+                els.resourceTitle.value.trim(),
 
-        type,
-        kind,
-        url,
-        mimeType,
-        fileName,
-        fileSize,
-        storagePath,
-        storageProvider,
+            type,
+            kind,
+            url,
+            mimeType,
+            fileName,
+            fileSize,
+            storagePath,
+            storageProvider,
 
-        notes:
-            els.resourceNotes.value.trim(),
+            notes:
+                els.resourceNotes.value.trim(),
 
-        createdAt:
-            Date.now()
-    });
+            createdAt:
+                Date.now()
+        });
 
-    saveState();
+        saveState();
 
-    closeModal(
-        els.resourceModal
-    );
-
-    renderAll();
-
-    showToast(
-        file
-            ? "Resource uploaded to your cloud library — available on every device."
-            : "Resource saved to your study library."
-    );
-}
-
-function resourceIcon(
-    resource
-) {
-    return resource.type ===
-        "video"
-        ? "🎬"
-        : resource.type ===
-            "link"
-            ? "🔗"
-            : "📄";
-}
-
-function humanFileSize(
-    bytes = 0
-) {
-    if (!bytes) {
-        return "Web resource";
-    }
-
-    const units = [
-        "B",
-        "KB",
-        "MB",
-        "GB"
-    ];
-
-    let i = 0;
-
-    let n =
-        bytes;
-
-    while (
-        n >= 1024 &&
-        i < 3
-    ) {
-        n /= 1024;
-        i += 1;
-    }
-
-    return `${n.toFixed(
-        i
-            ? 1
-            : 0
-    )} ${units[i]}`;
-} function renderResources() {
-    const query =
-        (
-            els.resourceSearch?.value ||
-            ""
-        )
-            .trim()
-            .toLowerCase();
-
-    const filter =
-        els.resourceTypeFilter?.value ||
-        "all";
-
-    const resources =
-        state.resources.filter(
-            resource =>
-                (
-                    !query ||
-                    `${resource.title} ${resource.notes} ${resource.fileName}`
-                        .toLowerCase()
-                        .includes(
-                            query
-                        )
-                ) &&
-                (
-                    filter ===
-                    "all" ||
-                    resource.type ===
-                    filter
-                )
+        closeModal(
+            els.resourceModal
         );
 
-    els.documentCount.textContent =
-        state.resources.filter(
-            r =>
-                r.type ===
-                "document"
-        ).length;
+        renderAll();
 
-    els.videoCount.textContent =
-        state.resources.filter(
-            r =>
-                r.type ===
-                "video"
-        ).length;
+        showToast(
+            file
+                ? "Resource uploaded to your cloud library — available on every device."
+                : "Resource saved to your study library."
+        );
+    }
 
-    els.linkCount.textContent =
-        state.resources.filter(
-            r =>
-                r.type ===
+    function resourceIcon(
+        resource
+    ) {
+        return resource.type ===
+            "video"
+            ? "🎬"
+            : resource.type ===
                 "link"
-        ).length;
+                ? "🔗"
+                : "📄";
+    }
 
-    els.resourceGrid.innerHTML =
-        resources.length
-            ? resources
-                .map(
-                    resource => {
-                        const progress =
-                            resource.readProgress;
+    function humanFileSize(
+        bytes = 0
+    ) {
+        if (!bytes) {
+            return "Web resource";
+        }
 
-                        let progressHtml =
-                            "";
+        const units = [
+            "B",
+            "KB",
+            "MB",
+            "GB"
+        ];
 
-                        let pct =
-                            null;
+        let i = 0;
 
-                        let isComplete =
-                            false;
+        let n =
+            bytes;
 
-                        if (
-                            progress?.kind ===
-                            "pdf" &&
-                            progress.totalPages
-                        ) {
-                            pct =
-                                Math.round(
-                                    (
-                                        progress.maxPage /
-                                        progress.totalPages
-                                    ) *
-                                    100
-                                );
+        while (
+            n >= 1024 &&
+            i < 3
+        ) {
+            n /= 1024;
+            i += 1;
+        }
 
-                            isComplete =
-                                progress.maxPage >=
-                                progress.totalPages;
+        return `${n.toFixed(
+            i
+                ? 1
+                : 0
+        )} ${units[i]}`;
+    } function renderResources() {
+        const query =
+            (
+                els.resourceSearch?.value ||
+                ""
+            )
+                .trim()
+                .toLowerCase();
 
-                            const label =
-                                isComplete
-                                    ? `✓ Finished · read all ${progress.totalPages} pages`
-                                    : `${pct}% read · furthest page ${progress.maxPage} of ${progress.totalPages}`;
+        const filter =
+            els.resourceTypeFilter?.value ||
+            "all";
 
-                            progressHtml =
-                                `
+        const resources =
+            state.resources.filter(
+                resource =>
+                    (
+                        !query ||
+                        `${resource.title} ${resource.notes} ${resource.fileName}`
+                            .toLowerCase()
+                            .includes(
+                                query
+                            )
+                    ) &&
+                    (
+                        filter ===
+                        "all" ||
+                        resource.type ===
+                        filter
+                    )
+            );
+
+        els.documentCount.textContent =
+            state.resources.filter(
+                r =>
+                    r.type ===
+                    "document"
+            ).length;
+
+        els.videoCount.textContent =
+            state.resources.filter(
+                r =>
+                    r.type ===
+                    "video"
+            ).length;
+
+        els.linkCount.textContent =
+            state.resources.filter(
+                r =>
+                    r.type ===
+                    "link"
+            ).length;
+
+        els.resourceGrid.innerHTML =
+            resources.length
+                ? resources
+                    .map(
+                        resource => {
+                            const progress =
+                                resource.readProgress;
+
+                            let progressHtml =
+                                "";
+
+                            let pct =
+                                null;
+
+                            let isComplete =
+                                false;
+
+                            if (
+                                progress?.kind ===
+                                "pdf" &&
+                                progress.totalPages
+                            ) {
+                                pct =
+                                    Math.round(
+                                        (
+                                            progress.maxPage /
+                                            progress.totalPages
+                                        ) *
+                                        100
+                                    );
+
+                                isComplete =
+                                    progress.maxPage >=
+                                    progress.totalPages;
+
+                                const label =
+                                    isComplete
+                                        ? `✓ Finished · read all ${progress.totalPages} pages`
+                                        : `${pct}% read · furthest page ${progress.maxPage} of ${progress.totalPages}`;
+
+                                progressHtml =
+                                    `
                                 <div class="resource-progress${isComplete
-                                    ? " is-complete"
-                                    : ""
-                                }">
+                                        ? " is-complete"
+                                        : ""
+                                    }">
                                     <span
                                         style="width:${pct}%"
                                     ></span>
@@ -9021,37 +8923,37 @@ function humanFileSize(
                                 </small>
                                 `;
 
-                        } else if (
-                            (
-                                progress?.kind ===
-                                "docx" ||
-                                progress?.kind ===
-                                "text"
-                            ) &&
-                            typeof progress.maxPercent ===
-                            "number"
-                        ) {
-                            pct =
-                                Math.round(
-                                    progress.maxPercent *
-                                    100
-                                );
+                            } else if (
+                                (
+                                    progress?.kind ===
+                                    "docx" ||
+                                    progress?.kind ===
+                                    "text"
+                                ) &&
+                                typeof progress.maxPercent ===
+                                "number"
+                            ) {
+                                pct =
+                                    Math.round(
+                                        progress.maxPercent *
+                                        100
+                                    );
 
-                            isComplete =
-                                progress.maxPercent >=
-                                0.999;
+                                isComplete =
+                                    progress.maxPercent >=
+                                    0.999;
 
-                            const label =
-                                isComplete
-                                    ? "✓ Finished reading"
-                                    : `${pct}% read`;
+                                const label =
+                                    isComplete
+                                        ? "✓ Finished reading"
+                                        : `${pct}% read`;
 
-                            progressHtml =
-                                `
+                                progressHtml =
+                                    `
                                 <div class="resource-progress${isComplete
-                                    ? " is-complete"
-                                    : ""
-                                }">
+                                        ? " is-complete"
+                                        : ""
+                                    }">
                                     <span
                                         style="width:${pct}%"
                                     ></span>
@@ -9061,22 +8963,22 @@ function humanFileSize(
                                     ${label}
                                 </small>
                                 `;
-                        }
+                            }
 
-                        const actionLabel =
-                            pct ===
-                                null
-                                ? "Open & study"
-                                : isComplete
-                                    ? "Review again"
-                                    : "Continue studying";
+                            const actionLabel =
+                                pct ===
+                                    null
+                                    ? "Open & study"
+                                    : isComplete
+                                        ? "Review again"
+                                        : "Continue studying";
 
-                        return `
+                            return `
                         <article class="resource-card">
                             <div class="resource-card__icon">
                                 ${resourceIcon(
-                            resource
-                        )}
+                                resource
+                            )}
                             </div>
 
                             <div class="resource-card__content">
@@ -9086,25 +8988,25 @@ function humanFileSize(
 
                                 <h3>
                                     ${escapeHtml(
-                            resource.title
-                        )}
+                                resource.title
+                            )}
                                 </h3>
 
                                 <p>
                                     ${escapeHtml(
-                            resource.notes ||
-                            resource.fileName ||
-                            "Ready to study"
-                        )}
+                                resource.notes ||
+                                resource.fileName ||
+                                "Ready to study"
+                            )}
                                 </p>
 
                                 <small>
                                     ${resource.fileName
-                                ? humanFileSize(
-                                    resource.fileSize
-                                )
-                                : "External link"
-                            }
+                                    ? humanFileSize(
+                                        resource.fileSize
+                                    )
+                                    : "External link"
+                                }
                                 </small>
 
                                 ${progressHtml}
@@ -9134,202 +9036,299 @@ function humanFileSize(
                             </div>
                         </article>
                         `;
-                    }
-                )
-                .join("")
-            : `
+                        }
+                    )
+                    .join("")
+                : `
             <div class="empty-state resource-empty">
                 No resources yet. Upload a document, video, or add a learning link.
             </div>
             `;
 
-    populateTaskResources();
-}
-
-function populateTaskResources() {
-    const current =
-        els.taskResource?.value ||
-        "";
-
-    if (
-        !els.taskResource
-    ) {
-        return;
+        populateTaskResources();
     }
 
-    els.taskResource.innerHTML =
-        `<option value="">No linked resource</option>${state.resources
-            .map(
+    function populateTaskResources() {
+        const current =
+            els.taskResource?.value ||
+            "";
+
+        if (
+            !els.taskResource
+        ) {
+            return;
+        }
+
+        els.taskResource.innerHTML =
+            `<option value="">No linked resource</option>${state.resources
+                .map(
+                    r =>
+                        `<option value="${r.id}">${escapeHtml(
+                            r.title
+                        )}</option>`
+                )
+                .join("")
+            }`;
+
+        if (
+            state.resources.some(
                 r =>
-                    `<option value="${r.id}">${escapeHtml(
-                        r.title
-                    )}</option>`
+                    r.id ===
+                    current
             )
-            .join("")
-        }`;
-
-    if (
-        state.resources.some(
-            r =>
-                r.id ===
-                current
-        )
-    ) {
-        els.taskResource.value =
-            current;
-    }
-}
-
-function revokeBlobUrl() {
-    if (currentBlobUrl) {
-        URL.revokeObjectURL(
-            currentBlobUrl
-        );
-
-        currentBlobUrl =
-            null;
-    }
-}
-
-// -------------------------------------------------------------
-// RESOURCE VIEWER
-// -------------------------------------------------------------
-
-let activeViewerCleanup =
-    null;
-
-function isResourceViewerOpen() {
-    return Boolean(
-        timer.activeResourceId &&
-        els.studyWorkspace &&
-        !els.studyWorkspace.classList.contains(
-            "hidden"
-        )
-    );
-}
-
-function isTextLikeResource(
-    resource
-) {
-    return (
-        resource.mimeType.startsWith(
-            "text/"
-        ) ||
-        /\.(txt|md|csv|json|log)$/i.test(
-            resource.fileName ||
-            ""
-        )
-    );
-}
-
-function isDocxResource(
-    resource
-) {
-    return (
-        resource.mimeType ===
-        "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
-        /\.docx$/i.test(
-            resource.fileName ||
-            ""
-        )
-    );
-}
-
-function teardownResourceViewer() {
-    if (
-        typeof activeViewerCleanup ===
-        "function"
-    ) {
-        try {
-            activeViewerCleanup();
-
-        } catch (error) {
-            console.warn(
-                "Viewer cleanup failed.",
-                error
-            );
+        ) {
+            els.taskResource.value =
+                current;
         }
     }
 
-    activeViewerCleanup =
+    function revokeBlobUrl() {
+        if (currentBlobUrl) {
+            URL.revokeObjectURL(
+                currentBlobUrl
+            );
+
+            currentBlobUrl =
+                null;
+        }
+    }
+
+    // -------------------------------------------------------------
+    // RESOURCE VIEWER
+    // -------------------------------------------------------------
+
+    let activeViewerCleanup =
         null;
 
-    revokeBlobUrl();
-}
-
-async function openStudyResource(
-    id,
-    taskId = ""
-) {
-    const resource =
-        getResource(
-            id
+    function isResourceViewerOpen() {
+        return Boolean(
+            timer.activeResourceId &&
+            els.studyWorkspace &&
+            !els.studyWorkspace.classList.contains(
+                "hidden"
+            )
         );
-
-    if (!resource) {
-        showToast(
-            "That resource is no longer available.",
-            "error"
-        );
-
-        return;
     }
 
-    teardownResourceViewer();
-
-    timer.activeResourceId =
-        resource.id;
-
-    els.workspaceTitle.textContent =
-        resource.title;
-
-    els.workspaceViewer.innerHTML =
-        `<div class="viewer-loading">Opening resource…</div>`;
-
-    els.studyWorkspace.classList.remove(
-        "hidden"
-    );
-
-    navigate(
-        "timer"
-    );
-
-    els.sessionTask.value =
-        taskId ||
-        "";
-
-    if (
-        resource.kind ===
-        "link"
+    function isTextLikeResource(
+        resource
     ) {
-        renderLinkViewer(
-            resource
+        return (
+            resource.mimeType.startsWith(
+                "text/"
+            ) ||
+            /\.(txt|md|csv|json|log)$/i.test(
+                resource.fileName ||
+                ""
+            )
         );
-
-        els.studyWorkspace.scrollIntoView({
-            behavior:
-                "smooth",
-
-            block:
-                "start"
-        });
-
-        return;
     }
 
-    const file =
-        await getResourceFileBlob(
-            resource
+    function isDocxResource(
+        resource
+    ) {
+        return (
+            resource.mimeType ===
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
+            /\.docx$/i.test(
+                resource.fileName ||
+                ""
+            )
+        );
+    }
+
+    function teardownResourceViewer() {
+        if (
+            typeof activeViewerCleanup ===
+            "function"
+        ) {
+            try {
+                activeViewerCleanup();
+
+            } catch (error) {
+                console.warn(
+                    "Viewer cleanup failed.",
+                    error
+                );
+            }
+        }
+
+        activeViewerCleanup =
+            null;
+
+        revokeBlobUrl();
+    }
+
+    async function openStudyResource(
+        id,
+        taskId = ""
+    ) {
+        const resource =
+            getResource(
+                id
+            );
+
+        if (!resource) {
+            showToast(
+                "That resource is no longer available.",
+                "error"
+            );
+
+            return;
+        }
+
+        teardownResourceViewer();
+
+        timer.activeResourceId =
+            resource.id;
+
+        els.workspaceTitle.textContent =
+            resource.title;
+
+        els.workspaceViewer.innerHTML =
+            `<div class="viewer-loading">Opening resource…</div>`;
+
+        els.studyWorkspace.classList.remove(
+            "hidden"
         );
 
-    if (!file) {
-        els.workspaceViewer.innerHTML =
-            `
+        navigate(
+            "timer"
+        );
+
+        els.sessionTask.value =
+            taskId ||
+            "";
+
+        if (
+            resource.kind ===
+            "link"
+        ) {
+            renderLinkViewer(
+                resource
+            );
+
+            els.studyWorkspace.scrollIntoView({
+                behavior:
+                    "smooth",
+
+                block:
+                    "start"
+            });
+
+            return;
+        }
+
+        const file =
+            await getResourceFileBlob(
+                resource
+            );
+
+        if (!file) {
+            els.workspaceViewer.innerHTML =
+                `
             <div class="empty-state">
                 This file could not be loaded from your cloud library. Check your connection and try again.
             </div>
             `;
 
+            els.studyWorkspace.scrollIntoView({
+                behavior:
+                    "smooth",
+
+                block:
+                    "start"
+            });
+
+            return;
+        }
+
+        currentBlobUrl =
+            URL.createObjectURL(
+                file
+            );
+
+        try {
+            if (
+                resource.mimeType ===
+                "application/pdf"
+            ) {
+                await renderPdfViewer(
+                    resource,
+                    file
+                );
+
+            } else if (
+                resource.mimeType.startsWith(
+                    "image/"
+                )
+            ) {
+                renderImageViewer(
+                    resource,
+                    currentBlobUrl
+                );
+
+            } else if (
+                resource.mimeType.startsWith(
+                    "video/"
+                )
+            ) {
+                renderVideoViewer(
+                    resource,
+                    currentBlobUrl
+                );
+
+            } else if (
+                resource.mimeType.startsWith(
+                    "audio/"
+                )
+            ) {
+                renderAudioViewer(
+                    resource,
+                    currentBlobUrl
+                );
+
+            } else if (
+                isDocxResource(
+                    resource
+                )
+            ) {
+                await renderDocxViewer(
+                    resource,
+                    file
+                );
+
+            } else if (
+                isTextLikeResource(
+                    resource
+                )
+            ) {
+                await renderTextViewer(
+                    resource,
+                    file
+                );
+
+            } else {
+                renderUnsupportedViewer(
+                    resource,
+                    currentBlobUrl,
+                    false
+                );
+            }
+
+        } catch (error) {
+            console.warn(
+                "Resource viewer failed to render — falling back to a download option.",
+                error
+            );
+
+            renderUnsupportedViewer(
+                resource,
+                currentBlobUrl,
+                true
+            );
+        }
+
         els.studyWorkspace.scrollIntoView({
             behavior:
                 "smooth",
@@ -9337,134 +9336,37 @@ async function openStudyResource(
             block:
                 "start"
         });
-
-        return;
     }
 
-    currentBlobUrl =
-        URL.createObjectURL(
-            file
-        );
-
-    try {
-        if (
-            resource.mimeType ===
-            "application/pdf"
-        ) {
-            await renderPdfViewer(
-                resource,
-                file
+    function renderLinkViewer(
+        resource
+    ) {
+        const safeUrl =
+            escapeHtml(
+                resource.url
             );
 
-        } else if (
-            resource.mimeType.startsWith(
-                "image/"
-            )
-        ) {
-            renderImageViewer(
-                resource,
-                currentBlobUrl
+        const videoId =
+            extractYoutubeVideoId(
+                resource.url
             );
 
-        } else if (
-            resource.mimeType.startsWith(
-                "video/"
-            )
-        ) {
-            renderVideoViewer(
-                resource,
-                currentBlobUrl
-            );
-
-        } else if (
-            resource.mimeType.startsWith(
-                "audio/"
-            )
-        ) {
-            renderAudioViewer(
-                resource,
-                currentBlobUrl
-            );
-
-        } else if (
-            isDocxResource(
-                resource
-            )
-        ) {
-            await renderDocxViewer(
-                resource,
-                file
-            );
-
-        } else if (
-            isTextLikeResource(
-                resource
-            )
-        ) {
-            await renderTextViewer(
-                resource,
-                file
-            );
-
-        } else {
-            renderUnsupportedViewer(
-                resource,
-                currentBlobUrl,
-                false
-            );
-        }
-
-    } catch (error) {
-        console.warn(
-            "Resource viewer failed to render — falling back to a download option.",
-            error
-        );
-
-        renderUnsupportedViewer(
-            resource,
-            currentBlobUrl,
-            true
-        );
-    }
-
-    els.studyWorkspace.scrollIntoView({
-        behavior:
-            "smooth",
-
-        block:
-            "start"
-    });
-}
-
-function renderLinkViewer(
-    resource
-) {
-    const safeUrl =
-        escapeHtml(
-            resource.url
-        );
-
-    const videoId =
-        extractYoutubeVideoId(
-            resource.url
-        );
-
-    if (videoId) {
-        els.workspaceViewer.innerHTML =
-            `<iframe
+        if (videoId) {
+            els.workspaceViewer.innerHTML =
+                `<iframe
                 src="https://www.youtube.com/embed/${videoId}"
                 title="${escapeHtml(
-                resource.title
-            )}"
+                    resource.title
+                )}"
                 allow="autoplay; encrypted-media; picture-in-picture"
                 allowfullscreen
             ></iframe>`;
 
-        return;
-    }
+            return;
+        }
 
-    els.workspaceViewer.innerHTML =
-        `
+        els.workspaceViewer.innerHTML =
+            `
         <div class="external-resource">
             <div class="resource-card__icon">
                 🔗
@@ -9472,8 +9374,8 @@ function renderLinkViewer(
 
             <h3>
                 ${escapeHtml(
-            resource.title
-        )}
+                resource.title
+            )}
             </h3>
 
             <p>
@@ -9490,14 +9392,14 @@ function renderLinkViewer(
             </a>
         </div>
         `;
-}
+    }
 
-function renderImageViewer(
-    resource,
-    blobUrl
-) {
-    els.workspaceViewer.innerHTML =
-        `
+    function renderImageViewer(
+        resource,
+        blobUrl
+    ) {
+        els.workspaceViewer.innerHTML =
+            `
         <div
             class="image-lightbox"
             id="imageLightbox"
@@ -9506,8 +9408,8 @@ function renderImageViewer(
                 <img
                     src="${blobUrl}"
                     alt="${escapeHtml(
-            resource.title
-        )}"
+                resource.title
+            )}"
                     id="lightboxImage"
                     draggable="false"
                 >
@@ -9547,307 +9449,307 @@ function renderImageViewer(
         </div>
         `;
 
-    activeViewerCleanup =
-        attachImageZoom();
-}
-
-function attachImageZoom() {
-    const stage =
-        els.workspaceViewer.querySelector(
-            ".image-lightbox__stage"
-        );
-
-    const img =
-        document.getElementById(
-            "lightboxImage"
-        );
-
-    const zoomLevelLabel =
-        document.getElementById(
-            "imageZoomLevel"
-        );
-
-    const zoomInButton =
-        document.getElementById(
-            "imageZoomIn"
-        );
-
-    const zoomOutButton =
-        document.getElementById(
-            "imageZoomOut"
-        );
-
-    const zoomResetButton =
-        document.getElementById(
-            "imageZoomReset"
-        );
-
-    if (
-        !stage ||
-        !img
-    ) {
-        return null;
+        activeViewerCleanup =
+            attachImageZoom();
     }
 
-    let scale = 1;
-    let originX = 0;
-    let originY = 0;
-    let isPanning = false;
-    let panStartX = 0;
-    let panStartY = 0;
-    let pinchStartDistance = 0;
-    let pinchStartScale = 1;
-    let lastTapTime = 0;
+    function attachImageZoom() {
+        const stage =
+            els.workspaceViewer.querySelector(
+                ".image-lightbox__stage"
+            );
 
-    function applyTransform() {
-        img.style.transform =
-            `translate(${originX}px, ${originY}px) scale(${scale})`;
+        const img =
+            document.getElementById(
+                "lightboxImage"
+            );
 
-        zoomLevelLabel.textContent =
-            `${Math.round(
-                scale *
-                100
-            )}%`;
+        const zoomLevelLabel =
+            document.getElementById(
+                "imageZoomLevel"
+            );
 
-        stage.classList.toggle(
-            "zoomed",
-            scale > 1
-        );
-    }
+        const zoomInButton =
+            document.getElementById(
+                "imageZoomIn"
+            );
 
-    function setScale(next) {
-        scale =
-            Math.min(
-                4,
-                Math.max(
-                    1,
-                    next
-                )
+        const zoomOutButton =
+            document.getElementById(
+                "imageZoomOut"
+            );
+
+        const zoomResetButton =
+            document.getElementById(
+                "imageZoomReset"
             );
 
         if (
-            scale === 1
+            !stage ||
+            !img
         ) {
-            originX = 0;
-            originY = 0;
+            return null;
         }
 
-        applyTransform();
-    }
+        let scale = 1;
+        let originX = 0;
+        let originY = 0;
+        let isPanning = false;
+        let panStartX = 0;
+        let panStartY = 0;
+        let pinchStartDistance = 0;
+        let pinchStartScale = 1;
+        let lastTapTime = 0;
 
-    function pointerDistance(
-        touches
-    ) {
-        const [
-            a,
-            b
-        ] =
-            touches;
+        function applyTransform() {
+            img.style.transform =
+                `translate(${originX}px, ${originY}px) scale(${scale})`;
 
-        return Math.hypot(
-            a.clientX -
-            b.clientX,
+            zoomLevelLabel.textContent =
+                `${Math.round(
+                    scale *
+                    100
+                )}%`;
 
-            a.clientY -
-            b.clientY
-        );
-    }
-
-    function onTouchStart(event) {
-        if (
-            event.touches.length ===
-            2
-        ) {
-            pinchStartDistance =
-                pointerDistance(
-                    event.touches
-                );
-
-            pinchStartScale =
-                scale;
-
-        } else if (
-            event.touches.length ===
-            1 &&
-            scale > 1
-        ) {
-            isPanning =
-                true;
-
-            panStartX =
-                event.touches[0].clientX -
-                originX;
-
-            panStartY =
-                event.touches[0].clientY -
-                originY;
+            stage.classList.toggle(
+                "zoomed",
+                scale > 1
+            );
         }
-    }
 
-    function onTouchMove(event) {
-        if (
-            event.touches.length ===
-            2
-        ) {
-            event.preventDefault();
-
-            const distance =
-                pointerDistance(
-                    event.touches
+        function setScale(next) {
+            scale =
+                Math.min(
+                    4,
+                    Math.max(
+                        1,
+                        next
+                    )
                 );
 
             if (
-                pinchStartDistance >
-                0
+                scale === 1
             ) {
-                setScale(
-                    pinchStartScale *
-                    (
-                        distance /
-                        pinchStartDistance
-                    )
-                );
+                originX = 0;
+                originY = 0;
             }
-
-        } else if (
-            event.touches.length ===
-            1 &&
-            isPanning
-        ) {
-            event.preventDefault();
-
-            originX =
-                event.touches[0].clientX -
-                panStartX;
-
-            originY =
-                event.touches[0].clientY -
-                panStartY;
 
             applyTransform();
         }
-    }
 
-    function onTouchEnd() {
-        isPanning =
-            false;
-
-        const now =
-            Date.now();
-
-        if (
-            now -
-            lastTapTime <
-            320
+        function pointerDistance(
+            touches
         ) {
-            setScale(
-                scale > 1
-                    ? 1
-                    : 2
+            const [
+                a,
+                b
+            ] =
+                touches;
+
+            return Math.hypot(
+                a.clientX -
+                b.clientX,
+
+                a.clientY -
+                b.clientY
             );
         }
 
-        lastTapTime =
-            now;
-    }
+        function onTouchStart(event) {
+            if (
+                event.touches.length ===
+                2
+            ) {
+                pinchStartDistance =
+                    pointerDistance(
+                        event.touches
+                    );
 
-    stage.addEventListener(
-        "touchstart",
-        onTouchStart,
-        {
-            passive:
-                true
-        }
-    );
+                pinchStartScale =
+                    scale;
 
-    stage.addEventListener(
-        "touchmove",
-        onTouchMove,
-        {
-            passive:
-                false
-        }
-    );
-
-    stage.addEventListener(
-        "touchend",
-        onTouchEnd
-    );
-
-    zoomInButton.addEventListener(
-        "click",
-        () =>
-            setScale(
-                scale +
-                0.5
-            )
-    );
-
-    zoomOutButton.addEventListener(
-        "click",
-        () =>
-            setScale(
-                scale -
-                0.5
-            )
-    );
-
-    zoomResetButton.addEventListener(
-        "click",
-        () =>
-            setScale(
-                1
-            )
-    );
-
-    img.addEventListener(
-        "dblclick",
-        () =>
-            setScale(
+            } else if (
+                event.touches.length ===
+                1 &&
                 scale > 1
-                    ? 1
-                    : 2
-            )
-    );
+            ) {
+                isPanning =
+                    true;
 
-    return () => {
-        stage.removeEventListener(
+                panStartX =
+                    event.touches[0].clientX -
+                    originX;
+
+                panStartY =
+                    event.touches[0].clientY -
+                    originY;
+            }
+        }
+
+        function onTouchMove(event) {
+            if (
+                event.touches.length ===
+                2
+            ) {
+                event.preventDefault();
+
+                const distance =
+                    pointerDistance(
+                        event.touches
+                    );
+
+                if (
+                    pinchStartDistance >
+                    0
+                ) {
+                    setScale(
+                        pinchStartScale *
+                        (
+                            distance /
+                            pinchStartDistance
+                        )
+                    );
+                }
+
+            } else if (
+                event.touches.length ===
+                1 &&
+                isPanning
+            ) {
+                event.preventDefault();
+
+                originX =
+                    event.touches[0].clientX -
+                    panStartX;
+
+                originY =
+                    event.touches[0].clientY -
+                    panStartY;
+
+                applyTransform();
+            }
+        }
+
+        function onTouchEnd() {
+            isPanning =
+                false;
+
+            const now =
+                Date.now();
+
+            if (
+                now -
+                lastTapTime <
+                320
+            ) {
+                setScale(
+                    scale > 1
+                        ? 1
+                        : 2
+                );
+            }
+
+            lastTapTime =
+                now;
+        }
+
+        stage.addEventListener(
             "touchstart",
-            onTouchStart
+            onTouchStart,
+            {
+                passive:
+                    true
+            }
         );
 
-        stage.removeEventListener(
+        stage.addEventListener(
             "touchmove",
-            onTouchMove
+            onTouchMove,
+            {
+                passive:
+                    false
+            }
         );
 
-        stage.removeEventListener(
+        stage.addEventListener(
             "touchend",
             onTouchEnd
         );
-    };
-}
 
-function renderVideoViewer(
-    resource,
-    blobUrl
-) {
-    els.workspaceViewer.innerHTML =
-        `<video
+        zoomInButton.addEventListener(
+            "click",
+            () =>
+                setScale(
+                    scale +
+                    0.5
+                )
+        );
+
+        zoomOutButton.addEventListener(
+            "click",
+            () =>
+                setScale(
+                    scale -
+                    0.5
+                )
+        );
+
+        zoomResetButton.addEventListener(
+            "click",
+            () =>
+                setScale(
+                    1
+                )
+        );
+
+        img.addEventListener(
+            "dblclick",
+            () =>
+                setScale(
+                    scale > 1
+                        ? 1
+                        : 2
+                )
+        );
+
+        return () => {
+            stage.removeEventListener(
+                "touchstart",
+                onTouchStart
+            );
+
+            stage.removeEventListener(
+                "touchmove",
+                onTouchMove
+            );
+
+            stage.removeEventListener(
+                "touchend",
+                onTouchEnd
+            );
+        };
+    }
+
+    function renderVideoViewer(
+        resource,
+        blobUrl
+    ) {
+        els.workspaceViewer.innerHTML =
+            `<video
             controls
             playsinline
             webkit-playsinline
             preload="metadata"
             src="${blobUrl}"
         ></video>`;
-}
+    }
 
-function renderAudioViewer(
-    resource,
-    blobUrl
-) {
-    els.workspaceViewer.innerHTML =
-        `
+    function renderAudioViewer(
+        resource,
+        blobUrl
+    ) {
+        els.workspaceViewer.innerHTML =
+            `
         <div class="audio-player-wrap">
             <div class="resource-card__icon">
                 🎧
@@ -9855,8 +9757,8 @@ function renderAudioViewer(
 
             <p>
                 ${escapeHtml(
-            resource.title
-        )}
+                resource.title
+            )}
             </p>
 
             <audio
@@ -9866,126 +9768,95 @@ function renderAudioViewer(
             ></audio>
         </div>
         `;
-}
-
-function attachScrollProgressTracking(
-    resource,
-    container,
-    kind
-) {
-    if (!container) {
-        return;
     }
 
-    const saved =
-        resource.readProgress?.kind ===
-            kind
-            ? resource.readProgress
-            : null;
-
-    if (
-        saved &&
-        saved.scrollPercent >
-        0
+    function attachScrollProgressTracking(
+        resource,
+        container,
+        kind
     ) {
-        requestAnimationFrame(
-            () => {
-                const maxScroll =
-                    container.scrollHeight -
-                    container.clientHeight;
+        if (!container) {
+            return;
+        }
 
-                if (
-                    maxScroll >
-                    0
-                ) {
-                    container.scrollTop =
-                        maxScroll *
-                        saved.scrollPercent;
-                }
-            }
-        );
-
-        const isFinished =
-            (
-                saved.maxPercent ||
-                0
-            ) >=
-            0.999;
-
-        showToast(
-            isFinished
-                ? `You've already finished reading "${resource.title}". Reopening where you left off.`
-                : `Resuming "${resource.title}" from where you left off.`
-        );
-    }
-
-    let persistTimeoutId =
-        null;
-
-    function onScroll() {
-        const maxScroll =
-            container.scrollHeight -
-            container.clientHeight;
-
-        const percent =
-            maxScroll > 0
-                ? Math.min(
-                    1,
-                    container.scrollTop /
-                    maxScroll
-                )
-                : 1;
-
-        const maxPercent =
-            Math.max(
-                percent,
-
-                resource.readProgress?.maxPercent ||
-                0
-            );
-
-        resource.readProgress = {
-            kind,
-
-            scrollPercent:
-                percent,
-
-            maxPercent,
-
-            updatedAt:
-                Date.now()
-        };
+        const saved =
+            resource.readProgress?.kind ===
+                kind
+                ? resource.readProgress
+                : null;
 
         if (
-            persistTimeoutId
+            saved &&
+            saved.scrollPercent >
+            0
         ) {
-            clearTimeout(
-                persistTimeoutId
+            requestAnimationFrame(
+                () => {
+                    const maxScroll =
+                        container.scrollHeight -
+                        container.clientHeight;
+
+                    if (
+                        maxScroll >
+                        0
+                    ) {
+                        container.scrollTop =
+                            maxScroll *
+                            saved.scrollPercent;
+                    }
+                }
+            );
+
+            const isFinished =
+                (
+                    saved.maxPercent ||
+                    0
+                ) >=
+                0.999;
+
+            showToast(
+                isFinished
+                    ? `You've already finished reading "${resource.title}". Reopening where you left off.`
+                    : `Resuming "${resource.title}" from where you left off.`
             );
         }
 
-        persistTimeoutId =
-            setTimeout(
-                saveState,
-                600
-            );
-    }
+        let persistTimeoutId =
+            null;
 
-    container.addEventListener(
-        "scroll",
-        onScroll,
-        {
-            passive:
-                true
-        }
-    );
+        function onScroll() {
+            const maxScroll =
+                container.scrollHeight -
+                container.clientHeight;
 
-    activeViewerCleanup =
-        () => {
-            container.removeEventListener(
-                "scroll",
-                onScroll
-            );
+            const percent =
+                maxScroll > 0
+                    ? Math.min(
+                        1,
+                        container.scrollTop /
+                        maxScroll
+                    )
+                    : 1;
+
+            const maxPercent =
+                Math.max(
+                    percent,
+
+                    resource.readProgress?.maxPercent ||
+                    0
+                );
+
+            resource.readProgress = {
+                kind,
+
+                scrollPercent:
+                    percent,
+
+                maxPercent,
+
+                updatedAt:
+                    Date.now()
+            };
 
             if (
                 persistTimeoutId
@@ -9994,111 +9865,142 @@ function attachScrollProgressTracking(
                     persistTimeoutId
                 );
             }
-        };
-}
 
-async function renderTextViewer(
-    resource,
-    file
-) {
-    const text =
-        await file.text();
+            persistTimeoutId =
+                setTimeout(
+                    saveState,
+                    600
+                );
+        }
 
-    els.workspaceViewer.innerHTML =
-        `<pre
+        container.addEventListener(
+            "scroll",
+            onScroll,
+            {
+                passive:
+                    true
+            }
+        );
+
+        activeViewerCleanup =
+            () => {
+                container.removeEventListener(
+                    "scroll",
+                    onScroll
+                );
+
+                if (
+                    persistTimeoutId
+                ) {
+                    clearTimeout(
+                        persistTimeoutId
+                    );
+                }
+            };
+    }
+
+    async function renderTextViewer(
+        resource,
+        file
+    ) {
+        const text =
+            await file.text();
+
+        els.workspaceViewer.innerHTML =
+            `<pre
             class="text-viewer"
             id="textViewerContent"
         >${escapeHtml(
-            text
-        )}</pre>`;
+                text
+            )}</pre>`;
 
-    attachScrollProgressTracking(
-        resource,
-
-        document.getElementById(
-            "textViewerContent"
-        ),
-
-        "text"
-    );
-}
-
-async function renderDocxViewer(
-    resource,
-    file
-) {
-    if (!window.mammoth) {
-        renderUnsupportedViewer(
+        attachScrollProgressTracking(
             resource,
-            currentBlobUrl,
-            true
-        );
 
-        return;
+            document.getElementById(
+                "textViewerContent"
+            ),
+
+            "text"
+        );
     }
 
-    const arrayBuffer =
-        await file.arrayBuffer();
+    async function renderDocxViewer(
+        resource,
+        file
+    ) {
+        if (!window.mammoth) {
+            renderUnsupportedViewer(
+                resource,
+                currentBlobUrl,
+                true
+            );
 
-    const result =
-        await window.mammoth.convertToHtml({
-            arrayBuffer
-        });
+            return;
+        }
 
-    els.workspaceViewer.innerHTML =
-        `<div
+        const arrayBuffer =
+            await file.arrayBuffer();
+
+        const result =
+            await window.mammoth.convertToHtml({
+                arrayBuffer
+            });
+
+        els.workspaceViewer.innerHTML =
+            `<div
             class="docx-viewer"
             id="docxViewerContent"
         >${result.value}</div>`;
 
-    attachScrollProgressTracking(
-        resource,
+        attachScrollProgressTracking(
+            resource,
 
-        document.getElementById(
-            "docxViewerContent"
-        ),
+            document.getElementById(
+                "docxViewerContent"
+            ),
 
-        "docx"
-    );
-}
-
-function renderUnsupportedViewer(
-    resource,
-    blobUrl,
-    isFallback
-) {
-    const message =
-        isFallback
-            ? "This file couldn't be opened in the built-in viewer."
-            : "The Study Companion can't preview this file type directly.";
-
-    const meta = [
-        (
-            resource.fileName ||
-            ""
-        )
-            .split(
-                "."
-            )
-            .pop()
-            ?.toUpperCase() ||
-        null,
-
-        resource.fileSize
-            ? humanFileSize(
-                resource.fileSize
-            )
-            : null
-    ]
-        .filter(
-            Boolean
-        )
-        .join(
-            " · "
+            "docx"
         );
+    }
 
-    els.workspaceViewer.innerHTML =
-        `
+    function renderUnsupportedViewer(
+        resource,
+        blobUrl,
+        isFallback
+    ) {
+        const message =
+            isFallback
+                ? "This file couldn't be opened in the built-in viewer."
+                : "The Study Companion can't preview this file type directly.";
+
+        const meta = [
+            (
+                resource.fileName ||
+                ""
+            )
+                .split(
+                    "."
+                )
+                .pop()
+                ?.toUpperCase() ||
+            null,
+
+            resource.fileSize
+                ? humanFileSize(
+                    resource.fileSize
+                )
+                : null
+        ]
+            .filter(
+                Boolean
+            )
+            .join(
+                " · "
+            );
+
+        els.workspaceViewer.innerHTML =
+            `
         <div class="external-resource">
             <div class="resource-card__icon">
                 📄
@@ -10106,21 +10008,21 @@ function renderUnsupportedViewer(
 
             <h3>
                 ${escapeHtml(
-            resource.fileName ||
-            resource.title
-        )}
+                resource.fileName ||
+                resource.title
+            )}
             </h3>
 
             ${meta
-            ? `
+                ? `
                 <p class="external-resource__meta">
                     ${escapeHtml(
-                meta
-            )}
+                    meta
+                )}
                 </p>
                 `
-            : ""
-        }
+                : ""
+            }
 
             <p>
                 ${message}
@@ -10131,9 +10033,9 @@ function renderUnsupportedViewer(
                 class="primary-button link-button"
                 href="${blobUrl}"
                 download="${escapeHtml(
-            resource.fileName ||
-            resource.title
-        )}"
+                resource.fileName ||
+                resource.title
+            )}"
                 target="_blank"
                 rel="noopener"
             >
@@ -10141,50 +10043,50 @@ function renderUnsupportedViewer(
             </a>
         </div>
         `;
-} async function renderPdfViewer(
-    resource,
-    file
-) {
-    if (!window.pdfjsLib) {
-        renderUnsupportedViewer(
-            resource,
-            currentBlobUrl,
-            true
-        );
+    } async function renderPdfViewer(
+        resource,
+        file
+    ) {
+        if (!window.pdfjsLib) {
+            renderUnsupportedViewer(
+                resource,
+                currentBlobUrl,
+                true
+            );
 
-        return;
-    }
+            return;
+        }
 
-    const bytes =
-        new Uint8Array(
-            await file.arrayBuffer()
-        );
+        const bytes =
+            new Uint8Array(
+                await file.arrayBuffer()
+            );
 
-    const pdf =
-        await window.pdfjsLib
-            .getDocument({
-                data:
-                    bytes
-            })
-            .promise;
+        const pdf =
+            await window.pdfjsLib
+                .getDocument({
+                    data:
+                        bytes
+                })
+                .promise;
 
-    const savedProgress =
-        resource.readProgress?.kind ===
-            "pdf"
-            ? resource.readProgress
-            : null;
+        const savedProgress =
+            resource.readProgress?.kind ===
+                "pdf"
+                ? resource.readProgress
+                : null;
 
-    const startPage =
-        savedProgress &&
-            savedProgress.lastPage >=
-            1 &&
-            savedProgress.lastPage <=
-            pdf.numPages
-            ? savedProgress.lastPage
-            : 1;
+        const startPage =
+            savedProgress &&
+                savedProgress.lastPage >=
+                1 &&
+                savedProgress.lastPage <=
+                pdf.numPages
+                ? savedProgress.lastPage
+                : 1;
 
-    els.workspaceViewer.innerHTML =
-        `
+        els.workspaceViewer.innerHTML =
+            `
         <div
             class="pdf-viewer"
             id="pdfViewer"
@@ -10251,1730 +10153,1730 @@ function renderUnsupportedViewer(
         </div>
         `;
 
-    const canvas =
-        document.getElementById(
-            "pdfCanvas"
-        );
-
-    const scrollArea =
-        document.getElementById(
-            "pdfCanvasScroll"
-        );
-
-    const pageIndicator =
-        document.getElementById(
-            "pdfPageIndicator"
-        );
-
-    const zoomLevelLabel =
-        document.getElementById(
-            "pdfZoomLevel"
-        );
-
-    const progressLabel =
-        document.getElementById(
-            "pdfProgressLabel"
-        );
-
-    let pageNumber =
-        startPage;
-
-    let zoom =
-        1;
-
-    let renderTask =
-        null;
-
-    let destroyed =
-        false;
-
-    function persistReadProgress() {
-        const maxPage =
-            Math.max(
-                pageNumber,
-
-                resource.readProgress?.maxPage ||
-                0
+        const canvas =
+            document.getElementById(
+                "pdfCanvas"
             );
 
-        resource.readProgress = {
-            kind:
-                "pdf",
-
-            lastPage:
-                pageNumber,
-
-            maxPage,
-
-            totalPages:
-                pdf.numPages,
-
-            updatedAt:
-                Date.now()
-        };
-
-        saveState();
-
-        if (progressLabel) {
-            progressLabel.textContent =
-                `Furthest read: page ${maxPage} of ${pdf.numPages}`;
-        }
-    }
-
-    async function renderPage() {
-        if (destroyed) {
-            return;
-        }
-
-        const page =
-            await pdf.getPage(
-                pageNumber
+        const scrollArea =
+            document.getElementById(
+                "pdfCanvasScroll"
             );
 
-        const baseViewport =
-            page.getViewport({
-                scale:
-                    1
-            });
-
-        const fitScale =
-            Math.max(
-                0.2,
-
-                (
-                    scrollArea.clientWidth -
-                    24
-                ) /
-                baseViewport.width
+        const pageIndicator =
+            document.getElementById(
+                "pdfPageIndicator"
             );
 
-        const viewport =
-            page.getViewport({
-                scale:
-                    fitScale *
-                    zoom
-            });
-
-        canvas.width =
-            Math.floor(
-                viewport.width
+        const zoomLevelLabel =
+            document.getElementById(
+                "pdfZoomLevel"
             );
 
-        canvas.height =
-            Math.floor(
-                viewport.height
+        const progressLabel =
+            document.getElementById(
+                "pdfProgressLabel"
             );
 
-        if (renderTask) {
-            renderTask.cancel();
-        }
+        let pageNumber =
+            startPage;
 
-        const context =
-            canvas.getContext(
-                "2d"
-            );
+        let zoom =
+            1;
 
-        renderTask =
-            page.render({
-                canvasContext:
-                    context,
+        let renderTask =
+            null;
 
-                viewport
-            });
+        let destroyed =
+            false;
 
-        try {
-            await renderTask.promise;
+        function persistReadProgress() {
+            const maxPage =
+                Math.max(
+                    pageNumber,
 
-        } catch (error) {
-            if (
-                error?.name !==
-                "RenderingCancelledException"
-            ) {
-                throw error;
+                    resource.readProgress?.maxPage ||
+                    0
+                );
+
+            resource.readProgress = {
+                kind:
+                    "pdf",
+
+                lastPage:
+                    pageNumber,
+
+                maxPage,
+
+                totalPages:
+                    pdf.numPages,
+
+                updatedAt:
+                    Date.now()
+            };
+
+            saveState();
+
+            if (progressLabel) {
+                progressLabel.textContent =
+                    `Furthest read: page ${maxPage} of ${pdf.numPages}`;
             }
         }
 
-        pageIndicator.textContent =
-            `Page ${pageNumber} of ${pdf.numPages}`;
-
-        zoomLevelLabel.textContent =
-            `${Math.round(
-                zoom *
-                100
-            )}%`;
-
-        persistReadProgress();
-    }
-
-    document
-        .getElementById(
-            "pdfPrevPage"
-        )
-        .addEventListener(
-            "click",
-            () => {
-                if (
-                    pageNumber >
-                    1
-                ) {
-                    pageNumber -=
-                        1;
-
-                    renderPage();
-                }
+        async function renderPage() {
+            if (destroyed) {
+                return;
             }
-        );
 
-    document
-        .getElementById(
-            "pdfNextPage"
-        )
-        .addEventListener(
-            "click",
-            () => {
-                if (
-                    pageNumber <
-                    pdf.numPages
-                ) {
-                    pageNumber +=
-                        1;
+            const page =
+                await pdf.getPage(
+                    pageNumber
+                );
 
-                    renderPage();
-                }
-            }
-        );
+            const baseViewport =
+                page.getViewport({
+                    scale:
+                        1
+                });
 
-    document
-        .getElementById(
-            "pdfZoomIn"
-        )
-        .addEventListener(
-            "click",
-            () => {
-                zoom =
-                    Math.min(
-                        3,
+            const fitScale =
+                Math.max(
+                    0.2,
 
-                        zoom +
-                        0.25
-                    );
+                    (
+                        scrollArea.clientWidth -
+                        24
+                    ) /
+                    baseViewport.width
+                );
 
-                renderPage();
-            }
-        );
+            const viewport =
+                page.getViewport({
+                    scale:
+                        fitScale *
+                        zoom
+                });
 
-    document
-        .getElementById(
-            "pdfZoomOut"
-        )
-        .addEventListener(
-            "click",
-            () => {
-                zoom =
-                    Math.max(
-                        0.5,
+            canvas.width =
+                Math.floor(
+                    viewport.width
+                );
 
-                        zoom -
-                        0.25
-                    );
-
-                renderPage();
-            }
-        );
-
-    await renderPage();
-
-    if (
-        startPage >
-        1
-    ) {
-        const isFinished =
-            (
-                savedProgress?.maxPage ||
-                0
-            ) >=
-            pdf.numPages;
-
-        showToast(
-            isFinished
-                ? `You've already read all ${pdf.numPages} pages of "${resource.title}". Reopening at page ${startPage}.`
-                : `Resuming "${resource.title}" from page ${startPage}.`
-        );
-    }
-
-    activeViewerCleanup =
-        () => {
-            destroyed =
-                true;
+            canvas.height =
+                Math.floor(
+                    viewport.height
+                );
 
             if (renderTask) {
                 renderTask.cancel();
             }
 
-            pdf.destroy?.();
-        };
-}
+            const context =
+                canvas.getContext(
+                    "2d"
+                );
 
-function closeStudyWorkspace() {
-    els.studyWorkspace.classList.remove(
-        "workspace-fullscreen"
-    );
+            renderTask =
+                page.render({
+                    canvasContext:
+                        context,
 
-    els.studyWorkspace.classList.add(
-        "hidden"
-    );
+                    viewport
+                });
 
-    els.workspaceViewer.innerHTML =
-        "";
+            try {
+                await renderTask.promise;
 
-    timer.activeResourceId =
-        null;
+            } catch (error) {
+                if (
+                    error?.name !==
+                    "RenderingCancelledException"
+                ) {
+                    throw error;
+                }
+            }
 
-    teardownResourceViewer();
-}
+            pageIndicator.textContent =
+                `Page ${pageNumber} of ${pdf.numPages}`;
 
-function toggleWorkspaceFullscreen() {
-    const isFullscreen =
-        els.studyWorkspace.classList.toggle(
+            zoomLevelLabel.textContent =
+                `${Math.round(
+                    zoom *
+                    100
+                )}%`;
+
+            persistReadProgress();
+        }
+
+        document
+            .getElementById(
+                "pdfPrevPage"
+            )
+            .addEventListener(
+                "click",
+                () => {
+                    if (
+                        pageNumber >
+                        1
+                    ) {
+                        pageNumber -=
+                            1;
+
+                        renderPage();
+                    }
+                }
+            );
+
+        document
+            .getElementById(
+                "pdfNextPage"
+            )
+            .addEventListener(
+                "click",
+                () => {
+                    if (
+                        pageNumber <
+                        pdf.numPages
+                    ) {
+                        pageNumber +=
+                            1;
+
+                        renderPage();
+                    }
+                }
+            );
+
+        document
+            .getElementById(
+                "pdfZoomIn"
+            )
+            .addEventListener(
+                "click",
+                () => {
+                    zoom =
+                        Math.min(
+                            3,
+
+                            zoom +
+                            0.25
+                        );
+
+                    renderPage();
+                }
+            );
+
+        document
+            .getElementById(
+                "pdfZoomOut"
+            )
+            .addEventListener(
+                "click",
+                () => {
+                    zoom =
+                        Math.max(
+                            0.5,
+
+                            zoom -
+                            0.25
+                        );
+
+                    renderPage();
+                }
+            );
+
+        await renderPage();
+
+        if (
+            startPage >
+            1
+        ) {
+            const isFinished =
+                (
+                    savedProgress?.maxPage ||
+                    0
+                ) >=
+                pdf.numPages;
+
+            showToast(
+                isFinished
+                    ? `You've already read all ${pdf.numPages} pages of "${resource.title}". Reopening at page ${startPage}.`
+                    : `Resuming "${resource.title}" from page ${startPage}.`
+            );
+        }
+
+        activeViewerCleanup =
+            () => {
+                destroyed =
+                    true;
+
+                if (renderTask) {
+                    renderTask.cancel();
+                }
+
+                pdf.destroy?.();
+            };
+    }
+
+    function closeStudyWorkspace() {
+        els.studyWorkspace.classList.remove(
             "workspace-fullscreen"
         );
 
-    if (
-        els.toggleWorkspaceFullscreen
-    ) {
-        els.toggleWorkspaceFullscreen.textContent =
-            isFullscreen
-                ? "⤡ Exit full screen"
-                : "⤢ Full screen";
-    }
-}
-
-function planResourceTask(id) {
-    const resource =
-        getResource(
-            id
+        els.studyWorkspace.classList.add(
+            "hidden"
         );
 
-    if (!resource) {
-        return;
+        els.workspaceViewer.innerHTML =
+            "";
+
+        timer.activeResourceId =
+            null;
+
+        teardownResourceViewer();
     }
 
-    openTaskEditor({
-        title:
-            `Study: ${resource.title}`,
+    function toggleWorkspaceFullscreen() {
+        const isFullscreen =
+            els.studyWorkspace.classList.toggle(
+                "workspace-fullscreen"
+            );
 
-        description:
-            resource.notes ||
-            `Study ${resource.title}`,
-
-        priority:
-            "medium",
-
-        dueDate:
-            "",
-
-        status:
-            "todo",
-
-        resourceId:
-            id
-    });
-}
-
-function startTaskStudy(id) {
-    const task =
-        state.tasks.find(
-            t =>
-                t.id ===
-                id
-        );
-
-    if (
-        !task?.resourceId
-    ) {
-        return;
-    }
-
-    if (
-        task.status ===
-        "todo"
-    ) {
-        task.status =
-            "inProgress";
-    }
-
-    saveState();
-
-    renderTasks();
-
-    openStudyResource(
-        task.resourceId,
-        task.id
-    );
-}
-
-async function deleteResource(id) {
-    const resource =
-        getResource(
-            id
-        );
-
-    if (
-        !resource ||
-        !window.confirm(
-            `Delete "${resource.title}" from your library?`
-        )
-    ) {
-        return;
-    }
-
-    await removeResourceFile(
-        resource
-    );
-
-    state.resources =
-        state.resources.filter(
-            r =>
-                r.id !==
-                id
-        );
-
-    state.tasks.forEach(
-        t => {
-            if (
-                t.resourceId ===
-                id
-            ) {
-                t.resourceId =
-                    "";
-            }
+        if (
+            els.toggleWorkspaceFullscreen
+        ) {
+            els.toggleWorkspaceFullscreen.textContent =
+                isFullscreen
+                    ? "⤡ Exit full screen"
+                    : "⤢ Full screen";
         }
-    );
+    }
 
-    saveState();
+    function planResourceTask(id) {
+        const resource =
+            getResource(
+                id
+            );
 
-    renderAll();
+        if (!resource) {
+            return;
+        }
 
-    showToast(
-        "Resource deleted.",
-        "warning"
-    );
-}
+        openTaskEditor({
+            title:
+                `Study: ${resource.title}`,
 
-// -------------------------------------------------------------
-// PROFILE
-// -------------------------------------------------------------
+            description:
+                resource.notes ||
+                `Study ${resource.title}`,
 
-function initials(
-    name = "Student"
-) {
-    return (
-        name
-            .split(
-                /\s+/
-            )
-            .filter(
-                Boolean
-            )
-            .slice(
-                0,
-                2
-            )
-            .map(
-                part =>
-                    part[0]
-            )
-            .join("")
-            .toUpperCase() ||
-        "ST"
-    );
-}
+            priority:
+                "medium",
 
-function applyAvatar(
-    element,
-    profile,
-    large = false
-) {
-    const init =
-        initials(
-            profile.name
-        );
+            dueDate:
+                "",
 
-    element.textContent =
-        profile.photo
-            ? ""
-            : init;
+            status:
+                "todo",
 
-    element.style.backgroundImage =
-        profile.photo
-            ? `url("${profile.photo}")`
-            : "";
+            resourceId:
+                id
+        });
+    }
 
-    element.classList.toggle(
-        "has-photo",
+    function startTaskStudy(id) {
+        const task =
+            state.tasks.find(
+                t =>
+                    t.id ===
+                    id
+            );
 
-        Boolean(
-            profile.photo
-        )
-    );
+        if (
+            !task?.resourceId
+        ) {
+            return;
+        }
 
-    if (large) {
-        element.setAttribute(
-            "aria-label",
+        if (
+            task.status ===
+            "todo"
+        ) {
+            task.status =
+                "inProgress";
+        }
 
-            profile.photo
-                ? `${profile.name || "Student"} profile picture`
-                : `${init} avatar`
+        saveState();
+
+        renderTasks();
+
+        openStudyResource(
+            task.resourceId,
+            task.id
         );
     }
-}
 
-function renderProfile() {
-    const p =
-        state.profile;
+    async function deleteResource(id) {
+        const resource =
+            getResource(
+                id
+            );
 
-    const has =
-        Boolean(
-            p.name
+        if (
+            !resource ||
+            !window.confirm(
+                `Delete "${resource.title}" from your library?`
+            )
+        ) {
+            return;
+        }
+
+        await removeResourceFile(
+            resource
         );
 
-    applyAvatar(
-        els.profileShortcut,
-        p
-    );
+        state.resources =
+            state.resources.filter(
+                r =>
+                    r.id !==
+                    id
+            );
 
-    applyAvatar(
-        els.profileAvatarLarge,
-        p,
-        true
-    );
+        state.tasks.forEach(
+            t => {
+                if (
+                    t.resourceId ===
+                    id
+                ) {
+                    t.resourceId =
+                        "";
+                }
+            }
+        );
 
-    els.removeProfilePhoto.classList.toggle(
-        "hidden",
-        !p.photo
-    );
+        saveState();
 
-    els.profileDisplayName.textContent =
-        has
-            ? p.name
-            : "Create your student profile";
+        renderAll();
 
-    els.profileDisplayMeta.textContent =
-        has
-            ? [
-                p.course,
-                p.department,
-                p.level,
-                p.school
-            ]
+        showToast(
+            "Resource deleted.",
+            "warning"
+        );
+    }
+
+    // -------------------------------------------------------------
+    // PROFILE
+    // -------------------------------------------------------------
+
+    function initials(
+        name = "Student"
+    ) {
+        return (
+            name
+                .split(
+                    /\s+/
+                )
                 .filter(
                     Boolean
                 )
-                .join(
-                    " • "
-                ) ||
-            p.email
-            : "Add your details to personalise your study experience.";
+                .slice(
+                    0,
+                    2
+                )
+                .map(
+                    part =>
+                        part[0]
+                )
+                .join("")
+                .toUpperCase() ||
+            "ST"
+        );
+    }
 
-    els.profileName.value =
-        p.name ||
-        "";
+    function applyAvatar(
+        element,
+        profile,
+        large = false
+    ) {
+        const init =
+            initials(
+                profile.name
+            );
 
-    els.profileEmail.value =
-        p.email ||
-        "";
+        element.textContent =
+            profile.photo
+                ? ""
+                : init;
 
-    els.profileSchool.value =
-        p.school ||
-        "";
+        element.style.backgroundImage =
+            profile.photo
+                ? `url("${profile.photo}")`
+                : "";
 
-    els.profileCourse.value =
-        p.course ||
-        "";
+        element.classList.toggle(
+            "has-photo",
 
-    els.profileDepartment.value =
-        p.department ||
-        "";
+            Boolean(
+                profile.photo
+            )
+        );
 
-    els.profileLevel.value =
-        p.level ||
-        "";
+        if (large) {
+            element.setAttribute(
+                "aria-label",
 
-    els.profileBio.value =
-        p.bio ||
-        "";
-
-    els.profileResourceCount.textContent =
-        state.resources.length;
-
-    els.profileTaskCount.textContent =
-        state.tasks.length;
-
-    els.profileSessionCount.textContent =
-        state.sessions.length;
-}
-
-function saveProfile(event) {
-    event.preventDefault();
-
-    state.profile = {
-        ...state.profile,
-
-        name:
-            els.profileName.value.trim(),
-
-        email:
-            els.profileEmail.value.trim(),
-
-        school:
-            els.profileSchool.value.trim(),
-
-        course:
-            els.profileCourse.value.trim(),
-
-        department:
-            els.profileDepartment.value.trim(),
-
-        level:
-            els.profileLevel.value.trim(),
-
-        bio:
-            els.profileBio.value.trim()
-    };
-
-    saveState();
-
-    renderProfile();
-
-    showToast(
-        "Student profile saved."
-    );
-}
-
-function resizeProfilePhoto(
-    file
-) {
-    return new Promise(
-        (
-            resolve,
-            reject
-        ) => {
-            const reader =
-                new FileReader();
-
-            reader.onerror =
-                () =>
-                    reject(
-                        new Error(
-                            "Could not read image"
-                        )
-                    );
-
-            reader.onload =
-                () => {
-                    const image =
-                        new Image();
-
-                    image.onerror =
-                        () =>
-                            reject(
-                                new Error(
-                                    "Invalid image"
-                                )
-                            );
-
-                    image.onload =
-                        () => {
-                            const max =
-                                640;
-
-                            const scale =
-                                Math.min(
-                                    1,
-
-                                    max /
-                                    Math.max(
-                                        image.width,
-                                        image.height
-                                    )
-                                );
-
-                            const canvas =
-                                document.createElement(
-                                    "canvas"
-                                );
-
-                            canvas.width =
-                                Math.round(
-                                    image.width *
-                                    scale
-                                );
-
-                            canvas.height =
-                                Math.round(
-                                    image.height *
-                                    scale
-                                );
-
-                            const ctx =
-                                canvas.getContext(
-                                    "2d"
-                                );
-
-                            ctx.drawImage(
-                                image,
-                                0,
-                                0,
-                                canvas.width,
-                                canvas.height
-                            );
-
-                            resolve(
-                                canvas.toDataURL(
-                                    "image/jpeg",
-                                    0.86
-                                )
-                            );
-                        };
-
-                    image.src =
-                        reader.result;
-                };
-
-            reader.readAsDataURL(
-                file
+                profile.photo
+                    ? `${profile.name || "Student"} profile picture`
+                    : `${init} avatar`
             );
         }
-    );
-}
-
-async function uploadProfilePhoto(
-    event
-) {
-    const file =
-        event.target.files?.[0];
-
-    if (!file) {
-        return;
     }
 
-    if (
-        ![
-            "image/jpeg",
-            "image/png",
-            "image/webp"
-        ].includes(
-            file.type
-        )
-    ) {
-        showToast(
-            "Choose a JPG, PNG, or WebP image.",
-            "warning"
-        );
+    function renderProfile() {
+        const p =
+            state.profile;
 
-        return;
-    }
-
-    if (
-        file.size >
-        5 *
-        1024 *
-        1024
-    ) {
-        showToast(
-            "Profile pictures must be 5 MB or smaller.",
-            "warning"
-        );
-
-        return;
-    }
-
-    try {
-        state.profile.photo =
-            await resizeProfilePhoto(
-                file
+        const has =
+            Boolean(
+                p.name
             );
+
+        applyAvatar(
+            els.profileShortcut,
+            p
+        );
+
+        applyAvatar(
+            els.profileAvatarLarge,
+            p,
+            true
+        );
+
+        els.removeProfilePhoto.classList.toggle(
+            "hidden",
+            !p.photo
+        );
+
+        els.profileDisplayName.textContent =
+            has
+                ? p.name
+                : "Create your student profile";
+
+        els.profileDisplayMeta.textContent =
+            has
+                ? [
+                    p.course,
+                    p.department,
+                    p.level,
+                    p.school
+                ]
+                    .filter(
+                        Boolean
+                    )
+                    .join(
+                        " • "
+                    ) ||
+                p.email
+                : "Add your details to personalise your study experience.";
+
+        els.profileName.value =
+            p.name ||
+            "";
+
+        els.profileEmail.value =
+            p.email ||
+            "";
+
+        els.profileSchool.value =
+            p.school ||
+            "";
+
+        els.profileCourse.value =
+            p.course ||
+            "";
+
+        els.profileDepartment.value =
+            p.department ||
+            "";
+
+        els.profileLevel.value =
+            p.level ||
+            "";
+
+        els.profileBio.value =
+            p.bio ||
+            "";
+
+        els.profileResourceCount.textContent =
+            state.resources.length;
+
+        els.profileTaskCount.textContent =
+            state.tasks.length;
+
+        els.profileSessionCount.textContent =
+            state.sessions.length;
+    }
+
+    function saveProfile(event) {
+        event.preventDefault();
+
+        state.profile = {
+            ...state.profile,
+
+            name:
+                els.profileName.value.trim(),
+
+            email:
+                els.profileEmail.value.trim(),
+
+            school:
+                els.profileSchool.value.trim(),
+
+            course:
+                els.profileCourse.value.trim(),
+
+            department:
+                els.profileDepartment.value.trim(),
+
+            level:
+                els.profileLevel.value.trim(),
+
+            bio:
+                els.profileBio.value.trim()
+        };
 
         saveState();
 
         renderProfile();
 
         showToast(
-            "Profile picture updated."
-        );
-
-    } catch {
-        showToast(
-            "We could not process that image.",
-            "warning"
+            "Student profile saved."
         );
     }
 
-    event.target.value =
-        "";
-}
-
-function removeProfilePhoto() {
-    if (
-        !state.profile.photo
+    function resizeProfilePhoto(
+        file
     ) {
-        return;
+        return new Promise(
+            (
+                resolve,
+                reject
+            ) => {
+                const reader =
+                    new FileReader();
+
+                reader.onerror =
+                    () =>
+                        reject(
+                            new Error(
+                                "Could not read image"
+                            )
+                        );
+
+                reader.onload =
+                    () => {
+                        const image =
+                            new Image();
+
+                        image.onerror =
+                            () =>
+                                reject(
+                                    new Error(
+                                        "Invalid image"
+                                    )
+                                );
+
+                        image.onload =
+                            () => {
+                                const max =
+                                    640;
+
+                                const scale =
+                                    Math.min(
+                                        1,
+
+                                        max /
+                                        Math.max(
+                                            image.width,
+                                            image.height
+                                        )
+                                    );
+
+                                const canvas =
+                                    document.createElement(
+                                        "canvas"
+                                    );
+
+                                canvas.width =
+                                    Math.round(
+                                        image.width *
+                                        scale
+                                    );
+
+                                canvas.height =
+                                    Math.round(
+                                        image.height *
+                                        scale
+                                    );
+
+                                const ctx =
+                                    canvas.getContext(
+                                        "2d"
+                                    );
+
+                                ctx.drawImage(
+                                    image,
+                                    0,
+                                    0,
+                                    canvas.width,
+                                    canvas.height
+                                );
+
+                                resolve(
+                                    canvas.toDataURL(
+                                        "image/jpeg",
+                                        0.86
+                                    )
+                                );
+                            };
+
+                        image.src =
+                            reader.result;
+                    };
+
+                reader.readAsDataURL(
+                    file
+                );
+            }
+        );
     }
 
-    state.profile.photo =
-        "";
-
-    saveState();
-
-    renderProfile();
-
-    showToast(
-        "Profile picture removed.",
-        "warning"
-    );
-}
-
-function renderAll() {
-    renderDashboard();
-    renderTasks();
-    renderResources();
-    renderProfile();
-    renderProgress();
-    populateSettings();
-    updateTimerUI();
-}
-
-// -------------------------------------------------------------
-// INTEGRITY COVERAGE
-// -------------------------------------------------------------
-
-function isReflectionOrAssessmentOpen() {
-    return Boolean(
-        (
-            els.reflectionModal &&
-            !els.reflectionModal.classList.contains(
-                "hidden"
-            )
-        ) ||
-        (
-            els.assessmentModal &&
-            !els.assessmentModal.classList.contains(
-                "hidden"
-            )
-        )
-    );
-}
-
-function flagReflectionIntegrityBreach(
-    reason
-) {
-    if (
-        !timer.pendingCompletion
+    async function uploadProfilePhoto(
+        event
     ) {
-        return;
-    }
+        const file =
+            event.target.files?.[0];
 
-    timer.pendingCompletion.focusViolations =
-        (
-            timer.pendingCompletion.focusViolations ||
-            0
-        ) +
-        1;
+        if (!file) {
+            return;
+        }
 
-    timer.pendingCompletion.checksFailed =
-        (
-            timer.pendingCompletion.checksFailed ||
-            0
-        ) +
-        1;
-
-    showToast(
-        `Integrity flag: you ${reason}. This session will be logged as flagged.`,
-        "error"
-    );
-}
-
-function flagAndPauseActiveSession(
-    reason,
-    message
-) {
-    if (
-        !timer.running ||
-        timer.mode !==
-        "focus" ||
-        !state.settings.focusTracking
-    ) {
-        return;
-    }
-
-    timer.focusViolations +=
-        1;
-
-    timer.automaticallyPausedByBlur =
-        true;
-
-    pauseTimer(
-        reason
-    );
-
-    updateTimerUI();
-
-    showToast(
-        message,
-        "error"
-    );
-}
-
-function handleVisibilityChange() {
-    if (
-        document.hidden
-    ) {
         if (
-            isReflectionOrAssessmentOpen()
+            ![
+                "image/jpeg",
+                "image/png",
+                "image/webp"
+            ].includes(
+                file.type
+            )
         ) {
-            flagReflectionIntegrityBreach(
-                "left the platform during your reflection or quiz"
+            showToast(
+                "Choose a JPG, PNG, or WebP image.",
+                "warning"
             );
 
-        } else if (
-            timer.running &&
-            timer.mode ===
-            "focus" &&
-            state.settings.focusTracking
+            return;
+        }
+
+        if (
+            file.size >
+            5 *
+            1024 *
+            1024
         ) {
-            flagAndPauseActiveSession(
-                "Paused: left Study Companion",
-                "Session paused and flagged because you left the Study Companion."
+            showToast(
+                "Profile pictures must be 5 MB or smaller.",
+                "warning"
+            );
+
+            return;
+        }
+
+        try {
+            state.profile.photo =
+                await resizeProfilePhoto(
+                    file
+                );
+
+            saveState();
+
+            renderProfile();
+
+            showToast(
+                "Profile picture updated."
+            );
+
+        } catch {
+            showToast(
+                "We could not process that image.",
+                "warning"
             );
         }
 
-        flushSaveState();
-
-        return;
+        event.target.value =
+            "";
     }
 
-    if (
-        timer.automaticallyPausedByBlur &&
-        timer.mode ===
-        "focus"
-    ) {
-        timer.automaticallyPausedByBlur =
-            false;
+    function removeProfilePhoto() {
+        if (
+            !state.profile.photo
+        ) {
+            return;
+        }
+
+        state.profile.photo =
+            "";
+
+        saveState();
+
+        renderProfile();
 
         showToast(
-            "You returned to the Study Companion. The session remains paused because leaving the platform was flagged.",
+            "Profile picture removed.",
             "warning"
         );
     }
-}
 
-function handleWindowBlur() {
-    if (
-        document.hidden
-    ) {
-        return;
+    function renderAll() {
+        renderDashboard();
+        renderTasks();
+        renderResources();
+        renderProfile();
+        renderProgress();
+        populateSettings();
+        updateTimerUI();
     }
 
-    /*
-     * Give the browser a moment to settle.
-     * This prevents false positives for focus changes
-     * that still belong to this page.
-     */
-    window.setTimeout(
-        () => {
-            if (
-                document.hidden ||
-                document.hasFocus()
-            ) {
-                return;
-            }
+    // -------------------------------------------------------------
+    // INTEGRITY COVERAGE
+    // -------------------------------------------------------------
 
+    function isReflectionOrAssessmentOpen() {
+        return Boolean(
+            (
+                els.reflectionModal &&
+                !els.reflectionModal.classList.contains(
+                    "hidden"
+                )
+            ) ||
+            (
+                els.assessmentModal &&
+                !els.assessmentModal.classList.contains(
+                    "hidden"
+                )
+            )
+        );
+    }
+
+    function flagReflectionIntegrityBreach(
+        reason
+    ) {
+        if (
+            !timer.pendingCompletion
+        ) {
+            return;
+        }
+
+        timer.pendingCompletion.focusViolations =
+            (
+                timer.pendingCompletion.focusViolations ||
+                0
+            ) +
+            1;
+
+        timer.pendingCompletion.checksFailed =
+            (
+                timer.pendingCompletion.checksFailed ||
+                0
+            ) +
+            1;
+
+        showToast(
+            `Integrity flag: you ${reason}. This session will be logged as flagged.`,
+            "error"
+        );
+    }
+
+    function flagAndPauseActiveSession(
+        reason,
+        message
+    ) {
+        if (
+            !timer.running ||
+            timer.mode !==
+            "focus" ||
+            !state.settings.focusTracking
+        ) {
+            return;
+        }
+
+        timer.focusViolations +=
+            1;
+
+        timer.automaticallyPausedByBlur =
+            true;
+
+        pauseTimer(
+            reason
+        );
+
+        updateTimerUI();
+
+        showToast(
+            message,
+            "error"
+        );
+    }
+
+    function handleVisibilityChange() {
+        if (
+            document.hidden
+        ) {
             if (
                 isReflectionOrAssessmentOpen()
             ) {
                 flagReflectionIntegrityBreach(
-                    "switched to another window or used split screen during your reflection or quiz"
+                    "left the platform during your reflection or quiz"
                 );
 
-                return;
-            }
-
-            if (
+            } else if (
                 timer.running &&
                 timer.mode ===
                 "focus" &&
                 state.settings.focusTracking
             ) {
                 flagAndPauseActiveSession(
-                    "Paused: Study Companion lost focus",
-                    "Session paused and flagged because another window or application received focus."
+                    "Paused: left Study Companion",
+                    "Session paused and flagged because you left the Study Companion."
                 );
             }
-        },
-        120
-    );
-}
 
-function handleFullscreenChange() {
-    if (
-        isReflectionOrAssessmentOpen()
-    ) {
+            flushSaveState();
+
+            return;
+        }
+
+        if (
+            timer.automaticallyPausedByBlur &&
+            timer.mode ===
+            "focus"
+        ) {
+            timer.automaticallyPausedByBlur =
+                false;
+
+            showToast(
+                "You returned to the Study Companion. The session remains paused because leaving the platform was flagged.",
+                "warning"
+            );
+        }
+    }
+
+    function handleWindowBlur() {
+        if (
+            document.hidden
+        ) {
+            return;
+        }
+
+        /*
+         * Give the browser a moment to settle.
+         * This prevents false positives for focus changes
+         * that still belong to this page.
+         */
+        window.setTimeout(
+            () => {
+                if (
+                    document.hidden ||
+                    document.hasFocus()
+                ) {
+                    return;
+                }
+
+                if (
+                    isReflectionOrAssessmentOpen()
+                ) {
+                    flagReflectionIntegrityBreach(
+                        "switched to another window or used split screen during your reflection or quiz"
+                    );
+
+                    return;
+                }
+
+                if (
+                    timer.running &&
+                    timer.mode ===
+                    "focus" &&
+                    state.settings.focusTracking
+                ) {
+                    flagAndPauseActiveSession(
+                        "Paused: Study Companion lost focus",
+                        "Session paused and flagged because another window or application received focus."
+                    );
+                }
+            },
+            120
+        );
+    }
+
+    function handleFullscreenChange() {
+        if (
+            isReflectionOrAssessmentOpen()
+        ) {
+            if (
+                !document.fullscreenElement
+            ) {
+                flagReflectionIntegrityBreach(
+                    "left full screen during your reflection or quiz"
+                );
+            }
+
+            return;
+        }
+
+        if (
+            timer.running &&
+            timer.mode ===
+            "focus" &&
+            state.settings.focusTracking &&
+            !document.fullscreenElement
+        ) {
+            flagAndPauseActiveSession(
+                "Paused: full screen exited",
+                "Session paused and flagged because full screen was exited."
+            );
+        }
+    }
+
+    function handleSessionResize() {
+        if (
+            !timer.running ||
+            timer.mode !==
+            "focus" ||
+            !state.settings.focusTracking
+        ) {
+            return;
+        }
+
+        /*
+         * A valid focus session must remain
+         * in browser fullscreen.
+         */
         if (
             !document.fullscreenElement
         ) {
-            flagReflectionIntegrityBreach(
-                "left full screen during your reflection or quiz"
+            flagAndPauseActiveSession(
+                "Paused: study window changed",
+                "Session paused and flagged because the study window was resized or moved out of full screen."
             );
         }
+    }// -------------------------------------------------------------
+    // EVENTS
+    // -------------------------------------------------------------
 
-        return;
-    }
-
-    if (
-        timer.running &&
-        timer.mode ===
-        "focus" &&
-        state.settings.focusTracking &&
-        !document.fullscreenElement
-    ) {
-        flagAndPauseActiveSession(
-            "Paused: full screen exited",
-            "Session paused and flagged because full screen was exited."
-        );
-    }
-}
-
-function handleSessionResize() {
-    if (
-        !timer.running ||
-        timer.mode !==
-        "focus" ||
-        !state.settings.focusTracking
-    ) {
-        return;
-    }
-
-    /*
-     * A valid focus session must remain
-     * in browser fullscreen.
-     */
-    if (
-        !document.fullscreenElement
-    ) {
-        flagAndPauseActiveSession(
-            "Paused: study window changed",
-            "Session paused and flagged because the study window was resized or moved out of full screen."
-        );
-    }
-}// -------------------------------------------------------------
-// EVENTS
-// -------------------------------------------------------------
-
-function bindEvents() {
-    els.navItems.forEach(
-        item => {
-            item.addEventListener(
-                "click",
-                () =>
-                    navigate(
-                        item.dataset.section
-                    )
-            );
-        }
-    );
-
-    document
-        .querySelectorAll(
-            "[data-go-to]"
-        )
-        .forEach(
-            button => {
-                button.addEventListener(
+    function bindEvents() {
+        els.navItems.forEach(
+            item => {
+                item.addEventListener(
                     "click",
                     () =>
                         navigate(
-                            button.dataset.goTo
+                            item.dataset.section
                         )
                 );
             }
         );
 
-    els.menuButton.addEventListener(
-        "click",
-        () =>
-            els.sidebar.classList.toggle(
-                "open"
+        document
+            .querySelectorAll(
+                "[data-go-to]"
             )
-    );
-
-    els.themeToggle.addEventListener(
-        "click",
-        () => {
-            state.settings.theme =
-                state.settings.theme ===
-                    "dark"
-                    ? "light"
-                    : "dark";
-
-            saveState();
-
-            applyTheme();
-        }
-    );
-
-    els.modeTabs.forEach(
-        tab => {
-            tab.addEventListener(
-                "click",
-                () =>
-                    setTimerMode(
-                        tab.dataset.mode
-                    )
+            .forEach(
+                button => {
+                    button.addEventListener(
+                        "click",
+                        () =>
+                            navigate(
+                                button.dataset.goTo
+                            )
+                    );
+                }
             );
-        }
-    );
 
-    els.startPauseTimer.addEventListener(
-        "click",
-        toggleTimer
-    );
-
-    els.resetTimer.addEventListener(
-        "click",
-        resetTimer
-    );
-
-    els.skipTimer.addEventListener(
-        "click",
-        skipTimer
-    );
-
-    els.confirmPresence.addEventListener(
-        "click",
-        confirmPresence
-    );
-
-    els.sessionGoal.addEventListener(
-        "input",
-        () => {
-            els.goalCount.textContent =
-                els.sessionGoal.value.length;
-        }
-    );
-
-    els.profileShortcut.addEventListener(
-        "click",
-        () =>
-            navigate(
-                "profile"
-            )
-    );
-
-    els.openResourceModal.addEventListener(
-        "click",
-        () => {
-            els.resourceForm.reset();
-
-            updateFileDropDisplay();
-
-            toggleResourceFields();
-
-            openModal(
-                els.resourceModal
-            );
-        }
-    );
-
-    els.resourceKind.addEventListener(
-        "change",
-        toggleResourceFields
-    );
-
-    els.resourceForm.addEventListener(
-        "submit",
-        saveResource
-    );
-
-    els.resourceSearch.addEventListener(
-        "input",
-        renderResources
-    );
-
-    els.resourceTypeFilter.addEventListener(
-        "change",
-        renderResources
-    );
-
-    els.closeWorkspace.addEventListener(
-        "click",
-        closeStudyWorkspace
-    );
-
-    if (
-        els.toggleWorkspaceFullscreen
-    ) {
-        els.toggleWorkspaceFullscreen.addEventListener(
-            "click",
-            toggleWorkspaceFullscreen
-        );
-    }
-
-    els.openTutorChat.addEventListener(
-        "click",
-        () =>
-            openTutorChatFor(
-                timer.activeResourceId
-            )
-    );
-
-    els.tutorChatForm.addEventListener(
-        "submit",
-        sendTutorChatMessage
-    );
-
-    els.clearTutorChat.addEventListener(
-        "click",
-        resetTutorChat
-    );
-
-    if (
-        els.tutorChatAttachButton &&
-        els.tutorChatFileInput
-    ) {
-        els.tutorChatAttachButton.addEventListener(
+        els.menuButton.addEventListener(
             "click",
             () =>
-                els.tutorChatFileInput.click()
+                els.sidebar.classList.toggle(
+                    "open"
+                )
         );
 
-        els.tutorChatFileInput.addEventListener(
-            "change",
-            handleTutorFileSelected
-        );
-    }
+        els.themeToggle.addEventListener(
+            "click",
+            () => {
+                state.settings.theme =
+                    state.settings.theme ===
+                        "dark"
+                        ? "light"
+                        : "dark";
 
-    els.tutorChatInput.addEventListener(
-        "keydown",
-        event => {
-            if (
-                event.key ===
-                "Enter" &&
-                !event.shiftKey
-            ) {
-                event.preventDefault();
+                saveState();
 
-                els.tutorChatForm.requestSubmit();
+                applyTheme();
             }
+        );
+
+        els.modeTabs.forEach(
+            tab => {
+                tab.addEventListener(
+                    "click",
+                    () =>
+                        setTimerMode(
+                            tab.dataset.mode
+                        )
+                );
+            }
+        );
+
+        els.startPauseTimer.addEventListener(
+            "click",
+            toggleTimer
+        );
+
+        els.resetTimer.addEventListener(
+            "click",
+            resetTimer
+        );
+
+        els.skipTimer.addEventListener(
+            "click",
+            skipTimer
+        );
+
+        els.confirmPresence.addEventListener(
+            "click",
+            confirmPresence
+        );
+
+        els.sessionGoal.addEventListener(
+            "input",
+            () => {
+                els.goalCount.textContent =
+                    els.sessionGoal.value.length;
+            }
+        );
+
+        els.profileShortcut.addEventListener(
+            "click",
+            () =>
+                navigate(
+                    "profile"
+                )
+        );
+
+        els.openResourceModal.addEventListener(
+            "click",
+            () => {
+                els.resourceForm.reset();
+
+                updateFileDropDisplay();
+
+                toggleResourceFields();
+
+                openModal(
+                    els.resourceModal
+                );
+            }
+        );
+
+        els.resourceKind.addEventListener(
+            "change",
+            toggleResourceFields
+        );
+
+        els.resourceForm.addEventListener(
+            "submit",
+            saveResource
+        );
+
+        els.resourceSearch.addEventListener(
+            "input",
+            renderResources
+        );
+
+        els.resourceTypeFilter.addEventListener(
+            "change",
+            renderResources
+        );
+
+        els.closeWorkspace.addEventListener(
+            "click",
+            closeStudyWorkspace
+        );
+
+        if (
+            els.toggleWorkspaceFullscreen
+        ) {
+            els.toggleWorkspaceFullscreen.addEventListener(
+                "click",
+                toggleWorkspaceFullscreen
+            );
         }
-    );
 
-    els.profileForm.addEventListener(
-        "submit",
-        saveProfile
-    );
+        els.openTutorChat.addEventListener(
+            "click",
+            () =>
+                openTutorChatFor(
+                    timer.activeResourceId
+                )
+        );
 
-    [
-        els.profilePhotoButton,
-        els.changeProfilePhoto
-    ].forEach(
-        button =>
-            button.addEventListener(
+        els.tutorChatForm.addEventListener(
+            "submit",
+            sendTutorChatMessage
+        );
+
+        els.clearTutorChat.addEventListener(
+            "click",
+            resetTutorChat
+        );
+
+        if (
+            els.tutorChatAttachButton &&
+            els.tutorChatFileInput
+        ) {
+            els.tutorChatAttachButton.addEventListener(
                 "click",
                 () =>
-                    els.profilePhotoInput.click()
-            )
-    );
+                    els.tutorChatFileInput.click()
+            );
 
-    els.profilePhotoInput.addEventListener(
-        "change",
-        uploadProfilePhoto
-    );
+            els.tutorChatFileInput.addEventListener(
+                "change",
+                handleTutorFileSelected
+            );
+        }
 
-    els.removeProfilePhoto.addEventListener(
-        "click",
-        removeProfilePhoto
-    );
+        els.tutorChatInput.addEventListener(
+            "keydown",
+            event => {
+                if (
+                    event.key ===
+                    "Enter" &&
+                    !event.shiftKey
+                ) {
+                    event.preventDefault();
 
-    els.logoutButton.addEventListener(
-        "click",
-        logout
-    );
-
-    bindFileDropEvents();
-
-    els.openTaskModal.addEventListener(
-        "click",
-        () =>
-            openTaskEditor()
-    );
-
-    els.taskForm.addEventListener(
-        "submit",
-        saveTask
-    );
-
-    els.taskSearch.addEventListener(
-        "input",
-        renderTasks
-    );
-
-    els.priorityFilter.addEventListener(
-        "change",
-        renderTasks
-    );
-
-    document.addEventListener(
-        "click",
-        event => {
-            const closeButton =
-                event.target.closest(
-                    "[data-close-modal]"
-                );
-
-            if (closeButton) {
-                closeModal(
-                    document.getElementById(
-                        closeButton.dataset.closeModal
-                    )
-                );
+                    els.tutorChatForm.requestSubmit();
+                }
             }
+        );
 
-            const editButton =
-                event.target.closest(
-                    "[data-edit-task]"
-                );
+        els.profileForm.addEventListener(
+            "submit",
+            saveProfile
+        );
 
-            if (editButton) {
-                const task =
-                    state.tasks.find(
-                        item =>
-                            item.id ===
-                            editButton.dataset.editTask
+        [
+            els.profilePhotoButton,
+            els.changeProfilePhoto
+        ].forEach(
+            button =>
+                button.addEventListener(
+                    "click",
+                    () =>
+                        els.profilePhotoInput.click()
+                )
+        );
+
+        els.profilePhotoInput.addEventListener(
+            "change",
+            uploadProfilePhoto
+        );
+
+        els.removeProfilePhoto.addEventListener(
+            "click",
+            removeProfilePhoto
+        );
+
+        els.logoutButton.addEventListener(
+            "click",
+            logout
+        );
+
+        bindFileDropEvents();
+
+        els.openTaskModal.addEventListener(
+            "click",
+            () =>
+                openTaskEditor()
+        );
+
+        els.taskForm.addEventListener(
+            "submit",
+            saveTask
+        );
+
+        els.taskSearch.addEventListener(
+            "input",
+            renderTasks
+        );
+
+        els.priorityFilter.addEventListener(
+            "change",
+            renderTasks
+        );
+
+        document.addEventListener(
+            "click",
+            event => {
+                const closeButton =
+                    event.target.closest(
+                        "[data-close-modal]"
                     );
 
-                if (task) {
-                    openTaskEditor(
-                        task
+                if (closeButton) {
+                    closeModal(
+                        document.getElementById(
+                            closeButton.dataset.closeModal
+                        )
+                    );
+                }
+
+                const editButton =
+                    event.target.closest(
+                        "[data-edit-task]"
+                    );
+
+                if (editButton) {
+                    const task =
+                        state.tasks.find(
+                            item =>
+                                item.id ===
+                                editButton.dataset.editTask
+                        );
+
+                    if (task) {
+                        openTaskEditor(
+                            task
+                        );
+                    }
+                }
+
+                const deleteButton =
+                    event.target.closest(
+                        "[data-delete-task]"
+                    );
+
+                if (deleteButton) {
+                    deleteTask(
+                        deleteButton.dataset.deleteTask
+                    );
+                }
+
+                const moveButton =
+                    event.target.closest(
+                        "[data-move-task]"
+                    );
+
+                if (moveButton) {
+                    moveTask(
+                        moveButton.dataset.moveTask,
+                        moveButton.dataset.nextStatus
+                    );
+                }
+
+                const studyTaskButton =
+                    event.target.closest(
+                        "[data-study-task]"
+                    );
+
+                if (
+                    studyTaskButton
+                ) {
+                    startTaskStudy(
+                        studyTaskButton.dataset.studyTask
+                    );
+                }
+
+                const openResourceButton =
+                    event.target.closest(
+                        "[data-open-resource]"
+                    );
+
+                if (
+                    openResourceButton
+                ) {
+                    openStudyResource(
+                        openResourceButton.dataset.openResource
+                    );
+                }
+
+                const planResourceButton =
+                    event.target.closest(
+                        "[data-plan-resource]"
+                    );
+
+                if (
+                    planResourceButton
+                ) {
+                    planResourceTask(
+                        planResourceButton.dataset.planResource
+                    );
+                }
+
+                const deleteResourceButton =
+                    event.target.closest(
+                        "[data-delete-resource]"
+                    );
+
+                if (
+                    deleteResourceButton
+                ) {
+                    deleteResource(
+                        deleteResourceButton.dataset.deleteResource
+                    );
+                }
+
+                const reflectionButton =
+                    event.target.closest(
+                        "[data-view-reflection]"
+                    );
+
+                if (
+                    reflectionButton
+                ) {
+                    viewReflection(
+                        reflectionButton.dataset.viewReflection
+                    );
+                }
+
+                const resultsButton =
+                    event.target.closest(
+                        "[data-view-results]"
+                    );
+
+                if (
+                    resultsButton
+                ) {
+                    viewSessionResults(
+                        resultsButton.dataset.viewResults
                     );
                 }
             }
+        );
 
-            const deleteButton =
-                event.target.closest(
-                    "[data-delete-task]"
-                );
-
-            if (deleteButton) {
-                deleteTask(
-                    deleteButton.dataset.deleteTask
-                );
-            }
-
-            const moveButton =
-                event.target.closest(
-                    "[data-move-task]"
-                );
-
-            if (moveButton) {
-                moveTask(
-                    moveButton.dataset.moveTask,
-                    moveButton.dataset.nextStatus
-                );
-            }
-
-            const studyTaskButton =
-                event.target.closest(
-                    "[data-study-task]"
-                );
-
-            if (
-                studyTaskButton
-            ) {
-                startTaskStudy(
-                    studyTaskButton.dataset.studyTask
-                );
-            }
-
-            const openResourceButton =
-                event.target.closest(
-                    "[data-open-resource]"
-                );
-
-            if (
-                openResourceButton
-            ) {
-                openStudyResource(
-                    openResourceButton.dataset.openResource
-                );
-            }
-
-            const planResourceButton =
-                event.target.closest(
-                    "[data-plan-resource]"
-                );
-
-            if (
-                planResourceButton
-            ) {
-                planResourceTask(
-                    planResourceButton.dataset.planResource
-                );
-            }
-
-            const deleteResourceButton =
-                event.target.closest(
-                    "[data-delete-resource]"
-                );
-
-            if (
-                deleteResourceButton
-            ) {
-                deleteResource(
-                    deleteResourceButton.dataset.deleteResource
-                );
-            }
-
-            const reflectionButton =
-                event.target.closest(
-                    "[data-view-reflection]"
-                );
-
-            if (
-                reflectionButton
-            ) {
-                viewReflection(
-                    reflectionButton.dataset.viewReflection
-                );
-            }
-
-            const resultsButton =
-                event.target.closest(
-                    "[data-view-results]"
-                );
-
-            if (
-                resultsButton
-            ) {
-                viewSessionResults(
-                    resultsButton.dataset.viewResults
-                );
-            }
-        }
-    );
-
-    document
-        .querySelectorAll(
-            ".modal-backdrop"
-        )
-        .forEach(
-            backdrop => {
-                backdrop.addEventListener(
-                    "mousedown",
-                    event => {
-                        if (
-                            event.target !==
-                            backdrop
-                        ) {
-                            return;
-                        }
-
-                        if (
-                            [
-                                els.verificationModal,
-                                els.reflectionModal
-                            ].includes(
+        document
+            .querySelectorAll(
+                ".modal-backdrop"
+            )
+            .forEach(
+                backdrop => {
+                    backdrop.addEventListener(
+                        "mousedown",
+                        event => {
+                            if (
+                                event.target !==
                                 backdrop
-                            )
-                        ) {
-                            return;
-                        }
+                            ) {
+                                return;
+                            }
 
-                        closeModal(
-                            backdrop
+                            if (
+                                [
+                                    els.verificationModal,
+                                    els.reflectionModal
+                                ].includes(
+                                    backdrop
+                                )
+                            ) {
+                                return;
+                            }
+
+                            closeModal(
+                                backdrop
+                            );
+                        }
+                    );
+                }
+            );
+
+        els.reflectionText.addEventListener(
+            "input",
+            validateReflection
+        );
+
+        els.assessmentForm.addEventListener(
+            "submit",
+            submitAssessment
+        );
+
+        els.backToReflection.addEventListener(
+            "click",
+            backToReflection
+        );
+
+        [
+            "paste",
+            "copy",
+            "cut",
+            "drop"
+        ].forEach(
+            eventName => {
+                els.reflectionText.addEventListener(
+                    eventName,
+                    event => {
+                        event.preventDefault();
+
+                        showToast(
+                            "Copy and paste are disabled for session reflections.",
+                            "warning"
                         );
                     }
                 );
             }
         );
 
-    els.reflectionText.addEventListener(
-        "input",
-        validateReflection
-    );
-
-    els.assessmentForm.addEventListener(
-        "submit",
-        submitAssessment
-    );
-
-    els.backToReflection.addEventListener(
-        "click",
-        backToReflection
-    );
-
-    [
-        "paste",
-        "copy",
-        "cut",
-        "drop"
-    ].forEach(
-        eventName => {
-            els.reflectionText.addEventListener(
-                eventName,
-                event => {
-                    event.preventDefault();
-
-                    showToast(
-                        "Copy and paste are disabled for session reflections.",
-                        "warning"
-                    );
-                }
-            );
-        }
-    );
-
-    els.reflectionText.addEventListener(
-        "contextmenu",
-        event =>
-            event.preventDefault()
-    );
-
-    els.saveReflection.addEventListener(
-        "click",
-        saveReflection
-    );
-
-    els.discardSession.addEventListener(
-        "click",
-        discardSession
-    );
-
-    els.clearHistory.addEventListener(
-        "click",
-        () => {
-            if (
-                !state.sessions.length
-            ) {
-                return;
-            }
-
-            if (
-                !window.confirm(
-                    "Clear all saved session history?"
-                )
-            ) {
-                return;
-            }
-
-            state.sessions =
-                [];
-
-            saveState();
-
-            renderAll();
-
-            showToast(
-                "Session history cleared.",
-                "warning"
-            );
-        }
-    );
-
-    els.saveSettings.addEventListener(
-        "click",
-        saveSettings
-    );
-
-    els.resetAllData.addEventListener(
-        "click",
-        resetAllData
-    );
-
-    if (
-        els.migrateToB2
-    ) {
-        els.migrateToB2.addEventListener(
-            "click",
-            migrateResourcesToB2
+        els.reflectionText.addEventListener(
+            "contextmenu",
+            event =>
+                event.preventDefault()
         );
-    }
 
-    /*
-     * Focus integrity listeners.
-     */
-    document.addEventListener(
-        "visibilitychange",
-        handleVisibilityChange
-    );
+        els.saveReflection.addEventListener(
+            "click",
+            saveReflection
+        );
 
-    document.addEventListener(
-        "fullscreenchange",
-        handleFullscreenChange
-    );
+        els.discardSession.addEventListener(
+            "click",
+            discardSession
+        );
 
-    window.addEventListener(
-        "blur",
-        handleWindowBlur
-    );
+        els.clearHistory.addEventListener(
+            "click",
+            () => {
+                if (
+                    !state.sessions.length
+                ) {
+                    return;
+                }
 
-    window.addEventListener(
-        "resize",
-        handleSessionResize
-    );
+                if (
+                    !window.confirm(
+                        "Clear all saved session history?"
+                    )
+                ) {
+                    return;
+                }
 
-    window.addEventListener(
-        "beforeunload",
-        event => {
-            if (
-                timer.running &&
-                timer.mode ===
-                "focus"
-            ) {
-                event.preventDefault();
+                state.sessions =
+                    [];
 
-                event.returnValue =
-                    "";
-            }
+                saveState();
 
-            flushSaveState();
-        }
-    );
+                renderAll();
 
-    document.addEventListener(
-        "keydown",
-        event => {
-            if (
-                event.key ===
-                "Escape"
-            ) {
-                [
-                    els.taskModal,
-                    els.resourceModal,
-                    els.reflectionViewModal
-                ].forEach(
-                    modal =>
-                        closeModal(
-                            modal
-                        )
+                showToast(
+                    "Session history cleared.",
+                    "warning"
                 );
             }
+        );
 
-            if (
-                event.code ===
-                "Space" &&
-                document.activeElement ===
-                document.body
-            ) {
-                event.preventDefault();
+        els.saveSettings.addEventListener(
+            "click",
+            saveSettings
+        );
 
-                toggleTimer();
-            }
+        els.resetAllData.addEventListener(
+            "click",
+            resetAllData
+        );
+
+        if (
+            els.migrateToB2
+        ) {
+            els.migrateToB2.addEventListener(
+                "click",
+                migrateResourcesToB2
+            );
         }
-    );
-}
 
-// -------------------------------------------------------------
-// APP INITIALISATION
-// -------------------------------------------------------------
-
-async function launchApp(
-    user,
-    signupName = ""
-) {
-    currentUser =
-        user;
-
-    state =
-        await loadState(
-            user.id
+        /*
+         * Focus integrity listeners.
+         */
+        document.addEventListener(
+            "visibilitychange",
+            handleVisibilityChange
         );
 
-    state.profile.email =
-        user.email ||
-        state.profile.email;
+        document.addEventListener(
+            "fullscreenchange",
+            handleFullscreenChange
+        );
 
-    if (signupName) {
-        state.profile.name =
-            signupName;
+        window.addEventListener(
+            "blur",
+            handleWindowBlur
+        );
 
-    } else if (
-        user.user_metadata?.full_name
-    ) {
-        state.profile.name =
-            user.user_metadata.full_name;
-    }
+        window.addEventListener(
+            "resize",
+            handleSessionResize
+        );
 
-    saveState();
+        window.addEventListener(
+            "beforeunload",
+            event => {
+                if (
+                    timer.running &&
+                    timer.mode ===
+                    "focus"
+                ) {
+                    event.preventDefault();
 
-    els.authShell.classList.add(
-        "hidden"
-    );
+                    event.returnValue =
+                        "";
+                }
 
-    els.appShell.classList.remove(
-        "hidden"
-    );
-
-    const now =
-        new Date();
-
-    els.todayLabel.textContent =
-        new Intl.DateTimeFormat(
-            "en-NG",
-            {
-                weekday:
-                    "long",
-
-                day:
-                    "numeric",
-
-                month:
-                    "long"
+                flushSaveState();
             }
-        ).format(
-            now
         );
 
-    applyTheme();
+        document.addEventListener(
+            "keydown",
+            event => {
+                if (
+                    event.key ===
+                    "Escape"
+                ) {
+                    [
+                        els.taskModal,
+                        els.resourceModal,
+                        els.reflectionViewModal
+                    ].forEach(
+                        modal =>
+                            closeModal(
+                                modal
+                            )
+                    );
+                }
 
-    populateSettings();
+                if (
+                    event.code ===
+                    "Space" &&
+                    document.activeElement ===
+                    document.body
+                ) {
+                    event.preventDefault();
 
-    renderAll();
-
-    setTimerMode(
-        "focus",
-        true
-    );
-
-    navigate(
-        "dashboard"
-    );
-}
-
-async function initialise() {
-    initialiseAuth();
-
-    bindEvents();
-
-    const user =
-        await getCurrentUser();
-
-    if (!user) {
-        els.authShell.classList.remove(
-            "hidden"
+                    toggleTimer();
+                }
+            }
         );
-
-        els.appShell.classList.add(
-            "hidden"
-        );
-
-        return;
     }
 
-    await launchApp(
-        user
-    );
-}
+    // -------------------------------------------------------------
+    // APP INITIALISATION
+    // -------------------------------------------------------------
 
-initialise();
+    async function launchApp(
+        user,
+        signupName = ""
+    ) {
+        currentUser =
+            user;
 
-}) ();
+        state =
+            await loadState(
+                user.id
+            );
+
+        state.profile.email =
+            user.email ||
+            state.profile.email;
+
+        if (signupName) {
+            state.profile.name =
+                signupName;
+
+        } else if (
+            user.user_metadata?.full_name
+        ) {
+            state.profile.name =
+                user.user_metadata.full_name;
+        }
+
+        saveState();
+
+        els.authShell.classList.add(
+            "hidden"
+        );
+
+        els.appShell.classList.remove(
+            "hidden"
+        );
+
+        const now =
+            new Date();
+
+        els.todayLabel.textContent =
+            new Intl.DateTimeFormat(
+                "en-NG",
+                {
+                    weekday:
+                        "long",
+
+                    day:
+                        "numeric",
+
+                    month:
+                        "long"
+                }
+            ).format(
+                now
+            );
+
+        applyTheme();
+
+        populateSettings();
+
+        renderAll();
+
+        setTimerMode(
+            "focus",
+            true
+        );
+
+        navigate(
+            "dashboard"
+        );
+    }
+
+    async function initialise() {
+        initialiseAuth();
+
+        bindEvents();
+
+        const user =
+            await getCurrentUser();
+
+        if (!user) {
+            els.authShell.classList.remove(
+                "hidden"
+            );
+
+            els.appShell.classList.add(
+                "hidden"
+            );
+
+            return;
+        }
+
+        await launchApp(
+            user
+        );
+    }
+
+    initialise();
+
+})();
