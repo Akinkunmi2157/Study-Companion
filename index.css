@@ -3128,3 +3128,50 @@ textarea.form-control {
         padding: 28px 16px;
     }
 }
+
+/* Compact content-sized tutor messages */
+.tutor-chat-messages {
+    align-items: stretch;
+}
+
+.tutor-msg {
+    flex: 0 0 auto;
+    width: fit-content;
+    min-width: 0;
+    max-width: min(88%, 470px);
+    overflow-wrap: anywhere;
+}
+
+.tutor-msg.user {
+    align-self: flex-end;
+    padding: 10px 14px;
+    white-space: normal;
+}
+
+.tutor-msg.assistant {
+    align-self: flex-start;
+}
+
+.tutor-user-text {
+    margin: 0;
+    white-space: pre-wrap;
+    line-height: 1.5;
+}
+
+.tutor-msg p:first-child {
+    margin-top: 0;
+}
+
+.tutor-msg p:last-child {
+    margin-bottom: 0;
+}
+
+.tutor-msg-attachment {
+    margin-bottom: 5px;
+    font-size: .8rem;
+    opacity: .9;
+}
+
+.tutor-chat-messages .tutor-msg:empty {
+    display: none;
+}
